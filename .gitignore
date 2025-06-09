@@ -2,3 +2,4 @@
 *.mvcov
 **/build
 **/deployments
+**/node_modules
