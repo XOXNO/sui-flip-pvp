@@ -70,6 +70,25 @@ const CoinFlipGame: React.FC = () => {
     setLoading(true);
     try {
       const betAmountMist = CoinFlipSDK.suiToMist(betAmount);
+      
+      // Check if user can afford the transaction
+      const affordability = await sdk.canAffordTransaction(
+        currentAccount.address, 
+        betAmountMist, 
+        'create'
+      );
+      
+      if (!affordability.canAfford) {
+        alert(
+          `Insufficient balance!\n` +
+          `You need ${CoinFlipSDK.mistToSui(affordability.totalRequired)} SUI total ` +
+          `(${betAmount} SUI bet + ${CoinFlipSDK.mistToSui(affordability.gasEstimate)} SUI gas)\n` +
+          `But you only have ${CoinFlipSDK.mistToSui(affordability.userBalance)} SUI\n` +
+          `Shortfall: ${CoinFlipSDK.mistToSui(affordability.shortfall!)} SUI`
+        );
+        return;
+      }
+      
       const tx = await sdk.createGame(currentAccount.address, betAmountMist, selectedChoice);
       
       signAndExecuteTransaction(
@@ -108,6 +127,24 @@ const CoinFlipGame: React.FC = () => {
         return;
       }
       
+      // Check if user can afford the transaction
+      const affordability = await sdk.canAffordTransaction(
+        currentAccount.address, 
+        gameDetails.betAmount, 
+        'join'
+      );
+      
+      if (!affordability.canAfford) {
+        alert(
+          `Insufficient balance to join game!\n` +
+          `You need ${CoinFlipSDK.mistToSui(affordability.totalRequired)} SUI total ` +
+          `(${CoinFlipSDK.mistToSui(gameDetails.betAmount)} SUI bet + ${CoinFlipSDK.mistToSui(affordability.gasEstimate)} SUI gas)\n` +
+          `But you only have ${CoinFlipSDK.mistToSui(affordability.userBalance)} SUI\n` +
+          `Shortfall: ${CoinFlipSDK.mistToSui(affordability.shortfall!)} SUI`
+        );
+        return;
+      }
+      
       const tx = await sdk.joinGame(currentAccount.address, gameId, gameDetails.betAmount);
       
       signAndExecuteTransaction(
@@ -139,6 +176,22 @@ const CoinFlipGame: React.FC = () => {
     
     setLoading(true);
     try {
+      // Check if user can afford the gas for cancelling
+      const affordability = await sdk.canAffordTransaction(
+        currentAccount.address, 
+        '0', // No bet amount for cancel
+        'cancel'
+      );
+      
+      if (!affordability.canAfford) {
+        alert(
+          `Insufficient balance for gas!\n` +
+          `You need ${CoinFlipSDK.mistToSui(affordability.gasEstimate)} SUI for gas\n` +
+          `But you only have ${CoinFlipSDK.mistToSui(affordability.userBalance)} SUI`
+        );
+        return;
+      }
+      
       const tx = await sdk.cancelGame(gameId);
       
       signAndExecuteTransaction(

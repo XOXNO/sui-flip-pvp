@@ -114,9 +114,22 @@ export class CoinFlipSDK {
   }
 
   /**
-   * Get user's SUI coins for betting
+   * Estimate gas cost for a transaction type
    */
-  async getUserCoins(userAddress: string, amount?: string): Promise<string[]> {
+  static estimateGasCost(transactionType: 'create' | 'join' | 'cancel'): string {
+    // Conservative gas estimates in MIST
+    const estimates = {
+      create: '10000000', // 0.01 SUI
+      join: '15000000',   // 0.015 SUI  
+      cancel: '5000000'   // 0.005 SUI
+    };
+    return estimates[transactionType];
+  }
+
+  /**
+   * Get user's SUI coins for betting (accounting for gas fees)
+   */
+  async getUserCoins(userAddress: string, amount?: string, transactionType: 'create' | 'join' | 'cancel' = 'create'): Promise<string[]> {
     try {
       const coins = await this.client.getCoins({
         owner: userAddress,
@@ -124,7 +137,11 @@ export class CoinFlipSDK {
       });
 
       if (amount) {
-        // Find coins that can cover the amount
+        // Reserve gas for the transaction
+        const gasReserve = BigInt(CoinFlipSDK.estimateGasCost(transactionType));
+        const totalNeeded = BigInt(amount) + gasReserve;
+        
+        // Find coins that can cover the amount + gas
         let totalValue = BigInt(0);
         const selectedCoins: string[] = [];
         
@@ -132,13 +149,18 @@ export class CoinFlipSDK {
           selectedCoins.push(coin.coinObjectId);
           totalValue += BigInt(coin.balance);
           
-          if (totalValue >= BigInt(amount)) {
+          if (totalValue >= totalNeeded) {
             break;
           }
         }
         
-        if (totalValue < BigInt(amount)) {
-          throw new Error(`Insufficient SUI balance. Need ${amount}, have ${totalValue}`);
+        if (totalValue < totalNeeded) {
+          throw new Error(
+            `Insufficient SUI balance. Need ${CoinFlipSDK.mistToSui(amount)} SUI for bet + ` +
+            `${CoinFlipSDK.mistToSui(gasReserve.toString())} SUI for gas = ` +
+            `${CoinFlipSDK.mistToSui(totalNeeded.toString())} SUI total, but you have ` +
+            `${CoinFlipSDK.mistToSui(totalValue.toString())} SUI`
+          );
         }
         
         return selectedCoins;
@@ -171,7 +193,7 @@ export class CoinFlipSDK {
       
       // Get required objects
       const clockId = await this.getClockObject();
-      const userCoins = await this.getUserCoins(userAddress, betAmount);
+      const userCoins = await this.getUserCoins(userAddress, betAmount, 'create');
       
       // Merge coins if multiple are needed
       let betCoin: any;
@@ -225,7 +247,7 @@ export class CoinFlipSDK {
       // Get required objects
       const clockId = await this.getClockObject();
       const randomId = await this.getRandomObject();
-      const userCoins = await this.getUserCoins(userAddress, betAmount);
+      const userCoins = await this.getUserCoins(userAddress, betAmount, 'join');
       
       // Merge coins if multiple are needed
       let betCoin: any;
@@ -820,6 +842,45 @@ export class CoinFlipSDK {
     }
   }
 
+  /**
+   * Check if user has enough balance for a transaction
+   */
+  async canAffordTransaction(
+    userAddress: string, 
+    betAmount: string, 
+    transactionType: 'create' | 'join' | 'cancel'
+  ): Promise<{
+    canAfford: boolean;
+    userBalance: string;
+    totalRequired: string;
+    gasEstimate: string;
+    shortfall?: string;
+  }> {
+    try {
+      const userBalance = await this.getUserBalance(userAddress);
+      const gasEstimate = CoinFlipSDK.estimateGasCost(transactionType);
+      const totalRequired = transactionType === 'cancel' 
+        ? gasEstimate 
+        : (BigInt(betAmount) + BigInt(gasEstimate)).toString();
+      
+      const canAfford = BigInt(userBalance) >= BigInt(totalRequired);
+      
+      const result = {
+        canAfford,
+        userBalance,
+        totalRequired,
+        gasEstimate,
+        ...(canAfford ? {} : { 
+          shortfall: (BigInt(totalRequired) - BigInt(userBalance)).toString() 
+        })
+      };
+      
+      return result;
+    } catch (error) {
+      throw new Error(`Failed to check transaction affordability: ${error}`);
+    }
+  }
+
   // ========================================
   // UTILITY FUNCTIONS
   // ========================================
@@ -883,11 +944,24 @@ const GAME_CONFIG_ID = '0x741f172d57cd0929fba3e7815dc90eff15657f415cb46ff9024d8a
 
 const sdk = new CoinFlipSDK('testnet', PACKAGE_ID, GAME_CONFIG_ID);
 
-// Example 1: Create a game
+// Example 1: Create a game (with gas checking)
 async function createGame(userAddress: string) {
   try {
     const betAmount = CoinFlipSDK.suiToMist('0.1'); // Bet 0.1 SUI
     const choice = true; // Choose heads
+    
+    // Check if user can afford the transaction
+    const affordability = await sdk.canAffordTransaction(userAddress, betAmount, 'create');
+    
+    if (!affordability.canAfford) {
+      console.error('Insufficient balance:', {
+        userBalance: CoinFlipSDK.mistToSui(affordability.userBalance) + ' SUI',
+        required: CoinFlipSDK.mistToSui(affordability.totalRequired) + ' SUI',
+        shortfall: CoinFlipSDK.mistToSui(affordability.shortfall!) + ' SUI',
+        gasEstimate: CoinFlipSDK.mistToSui(affordability.gasEstimate) + ' SUI'
+      });
+      return;
+    }
     
     const tx = await sdk.createGame(userAddress, betAmount, choice);
     
@@ -899,12 +973,26 @@ async function createGame(userAddress: string) {
   }
 }
 
-// Example 2: Join a game
+// Example 2: Join a game (with gas checking)
 async function joinGame(userAddress: string, gameId: string) {
   try {
     // First get game details to know the bet amount
     const gameDetails = await sdk.getGameDetails(gameId);
     if (!gameDetails) throw new Error('Game not found');
+    
+    // Check if user can afford the transaction
+    const affordability = await sdk.canAffordTransaction(userAddress, gameDetails.betAmount, 'join');
+    
+    if (!affordability.canAfford) {
+      console.error('Insufficient balance to join game:', {
+        betAmount: CoinFlipSDK.mistToSui(gameDetails.betAmount) + ' SUI',
+        gasEstimate: CoinFlipSDK.mistToSui(affordability.gasEstimate) + ' SUI',
+        totalRequired: CoinFlipSDK.mistToSui(affordability.totalRequired) + ' SUI',
+        userBalance: CoinFlipSDK.mistToSui(affordability.userBalance) + ' SUI',
+        shortfall: CoinFlipSDK.mistToSui(affordability.shortfall!) + ' SUI'
+      });
+      return;
+    }
     
     const tx = await sdk.joinGame(userAddress, gameId, gameDetails.betAmount);
     
