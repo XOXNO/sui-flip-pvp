@@ -267,13 +267,12 @@ export class CoinFlipSDK {
       
       // Join the game
       tx.moveCall({
-        target: `${this.packageId}::coin_flip::join_game`,
+        target: `${this.packageId}::coin_flip::join_games`,
         arguments: [
           tx.object(gameId),
           splitCoin,
           tx.object(this.gameConfigId),
           tx.object(randomId),
-          tx.object(clockId),
         ],
       });
       

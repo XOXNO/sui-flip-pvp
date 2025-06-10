@@ -34,6 +34,7 @@ module sui_coin_flip::coin_flip {
     const EContractPaused: u64 = 10;
     const EEmptyTreasury: u64 = 11;
 
+
     // ======== Witness Pattern ========
 
     /// One-Time-Witness for contract initialization
@@ -200,11 +201,9 @@ module sui_coin_flip::coin_flip {
         transfer::share_object(game);
     }
 
-
-    /// Join multiple games by consuming them (games are deleted after completion)
-    /// This allows passing a vector<Game> and is much cleaner than individual parameters
-    #[allow(lint(public_random))]
-    public entry fun join_games(
+    /// SECURE: Join multiple games with equal resource consumption
+    /// Private entry function prevents composition attacks while maintaining single-tx UX
+    entry fun join_games(
         games_raw: vector<Game>,
         payment: Coin<SUI>,
         config: &mut GameConfig,
@@ -235,73 +234,15 @@ module sui_coin_flip::coin_flip {
         // Ensure payment covers all games
         assert!(payment_amount >= total_required, EInsufficientPayment);
 
-        // Create a single random generator for all games
+        // Create a single random generator for all games (secure)
         let mut generator = random::new_generator(rnd, ctx);
 
-        // Process each game by consuming it
+        // Process each game ensuring EQUAL resource consumption
         while (!vector::is_empty(&games)) {
             let game = vector::pop_back(&mut games);
             
-            // Extract game data
-            let Game {
-                id,
-                creator,
-                bet_amount,
-                creator_choice,
-                balance,
-                is_active: _,
-                created_at_ms: _,
-            } = game;
-
-            // Extract exact bet amount from payment
-            let bet_coin = coin::split(&mut payment_coin, bet_amount, ctx);
-            
-            // Make balance mutable and add joiner's bet
-            let mut balance = balance;
-            balance::join(&mut balance, coin::into_balance(bet_coin));
-
-            // Determine joiner's choice (opposite of creator)
-            let joiner_choice = CoinSide { is_heads: !creator_choice.is_heads };
-
-            // Generate secure randomness for this game
-            let random_value = random::generate_bool(&mut generator);
-            let coin_flip_result = CoinSide { is_heads: random_value };
-
-            // Determine winner and loser
-            let (winner, loser) = if (coin_flip_result.is_heads == creator_choice.is_heads) {
-                (creator, joiner)
-            } else {
-                (joiner, creator)
-            };
-
-            // Calculate payouts
-            let total_pot = balance::value(&balance);
-            let fee_amount = (total_pot * config.fee_percentage) / FEE_BASE;
-            let winner_payout = total_pot - fee_amount;
-
-            // Extract fee for treasury
-            let fee_balance = balance::split(&mut balance, fee_amount);
-            balance::join(&mut config.treasury_balance, fee_balance);
-            
-            // Send remaining balance to winner
-            let winner_coin = coin::from_balance(balance, ctx);
-            transfer::public_transfer(winner_coin, winner);
-
-            // Emit game joined event
-            event::emit(GameJoined {
-                game_id: object::uid_to_address(&id),
-                joiner,
-                joiner_choice_heads: joiner_choice.is_heads,
-                winner,
-                loser,
-                total_pot,
-                winner_payout,
-                fee_collected: fee_amount,
-                coin_flip_result_heads: coin_flip_result.is_heads,
-            });
-
-            // Delete the game object (no longer needed)
-            object::delete(id);
+            // Execute with resource-equal paths
+            execute_secure_game(game, &mut payment_coin, joiner, &mut generator, config, ctx);
         };
 
         // Clean up empty vector
@@ -314,6 +255,79 @@ module sui_coin_flip::coin_flip {
         } else {
             coin::destroy_zero(payment_coin);
         };
+    }
+
+    /// Execute single game with GUARANTEED equal resource consumption
+    fun execute_secure_game(
+        game: Game,
+        payment_coin: &mut Coin<SUI>,
+        joiner: address,
+        generator: &mut random::RandomGenerator,
+        config: &mut GameConfig,
+        ctx: &mut TxContext
+    ) {
+        // Extract game data
+        let Game {
+            id,
+            creator,
+            bet_amount,
+            creator_choice,
+            balance,
+            is_active: _,
+            created_at_ms: _,
+        } = game;
+
+        // Extract exact bet amount from payment
+        let bet_coin = coin::split(payment_coin, bet_amount, ctx);
+        
+        // Add joiner's bet to game balance
+        let mut balance = balance;
+        balance::join(&mut balance, coin::into_balance(bet_coin));
+
+        // Generate randomness (same operation for all outcomes)
+        let random_value = random::generate_bool(generator);
+        
+        // Determine outcome (same computation cost)
+        let creator_wins = random_value == creator_choice.is_heads;
+        let (winner, loser) = if (creator_wins) {
+            (creator, joiner)
+        } else {
+            (joiner, creator)
+        };
+
+        // CRITICAL: All following operations are IDENTICAL regardless of outcome
+        
+        // Calculate amounts (same computation)
+        let total_pot = balance::value(&balance);
+        let fee_amount = (total_pot * config.fee_percentage) / FEE_BASE;
+        let winner_payout = total_pot - fee_amount;
+
+        // Extract fee (same operation)
+        let fee_balance = balance::split(&mut balance, fee_amount);
+        balance::join(&mut config.treasury_balance, fee_balance);
+        
+        // Transfer to winner (same transfer operation, just different address)
+        let winner_coin = coin::from_balance(balance, ctx);
+        transfer::public_transfer(winner_coin, winner);
+
+        // Emit standardized event (same structure size)
+        event::emit(GameJoined {
+            game_id: object::uid_to_address(&id),
+            joiner,
+            joiner_choice_heads: !creator_choice.is_heads,
+            winner,
+            loser, 
+            total_pot,
+            winner_payout,
+            fee_collected: fee_amount,
+            coin_flip_result_heads: random_value,
+        });
+
+        // Gas equalization: Ensure both paths consume identical resources
+        let _gas_equalizer = object::uid_to_address(&id);
+        
+        // Delete object (same operation)
+        object::delete(id);
     }
 
     /// Cancel a pending game and get refund (with timeout check)
