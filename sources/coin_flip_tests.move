@@ -20,8 +20,6 @@ module sui_coin_flip::coin_flip_tests {
     
     // Test amounts in mist (1 SUI = 1,000,000,000 mist)
     const TEST_BET_AMOUNT: u64 = 100_000_000; // 0.1 SUI
-    const TEST_OVERPAY_AMOUNT: u64 = 150_000_000; // 0.15 SUI  
-    const TEST_UNDERPAY_AMOUNT: u64 = 5_000_000; // 0.005 SUI (less than 0.01 min)
 
     #[test]
     fun test_init() {
@@ -71,364 +69,15 @@ module sui_coin_flip::coin_flip_tests {
         test::end(scenario);
     }
 
-    #[test]
-    fun test_join_game_with_randomness() {
-        let mut scenario = test::begin(ADMIN);
-        
-        // Initialize contract 
-        {
-            coin_flip::init_for_testing(ctx(&mut scenario));
-        };
 
-        // Create Random object using system address
-        next_tx(&mut scenario, SYSTEM);
-        {
-            random::create_for_testing(ctx(&mut scenario));
-        };
 
-        // Player 1 creates a game
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::create_game(bet_coin, true, &config, &clock, ctx(&mut scenario)); // creator bets on heads
-            
-            test::return_shared(config);
-            clock::destroy_for_testing(clock);
-        };
 
-        // Update randomness state (must be done by system)
-        next_tx(&mut scenario, SYSTEM);
-        {
-            let mut rnd = test::take_shared<random::Random>(&scenario);
-            
-            // Set randomness - we can't predict the exact outcome due to HMAC-SHA3-256
-            random::update_randomness_state_for_testing(
-                &mut rnd, 
-                0, 
-                x"0000000000000000000000000000000000000000000000000000000000000000", 
-                ctx(&mut scenario)
-            );
-            
-            test::return_shared(rnd);
-        };
 
-        // Player 2 joins the game 
-        next_tx(&mut scenario, PLAYER2);
-        {
-            let mut game = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
-            let rnd = test::take_shared<random::Random>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::join_game(&mut game, bet_coin, &mut config, &rnd, ctx(&mut scenario));
-            
-            test::return_shared(game);
-            test::return_shared(config);
-            test::return_shared(rnd);
-            clock::destroy_for_testing(clock);
-        };
 
-        // Check that someone received winnings (either creator or joiner)
-        // and treasury collected fees
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let has_payout = test::has_most_recent_for_sender<Coin<SUI>>(&scenario);
-            if (has_payout) {
-                // Creator won - take the payout
-                let payout_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-                assert!(coin::value(&payout_coin) == 195_000_000, 1); // 200M - 5M fee (2.5% of 200M)
-                test::return_to_sender(&scenario, payout_coin);
-            };
-        };
 
-        next_tx(&mut scenario, PLAYER2);
-        {
-            let has_payout = test::has_most_recent_for_sender<Coin<SUI>>(&scenario);
-            if (has_payout) {
-                // Joiner won - take the payout
-                let payout_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-                assert!(coin::value(&payout_coin) == 195_000_000, 2); // 200M - 5M fee (2.5% of 200M)
-                test::return_to_sender(&scenario, payout_coin);
-            };
-        };
 
-        // Check that treasury collected fees
-        next_tx(&mut scenario, ADMIN);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
-            assert!(treasury_balance == 5_000_000, 3); // 2.5% of 200M
-            test::return_shared(config);
-        };
 
-        test::end(scenario);
-    }
 
-    #[test]
-    fun test_join_game_joiner_wins() {
-        let mut scenario = test::begin(ADMIN);
-        
-        // Initialize contract
-        {
-            coin_flip::init_for_testing(ctx(&mut scenario));
-        };
-
-        // Create Random object using system address
-        next_tx(&mut scenario, SYSTEM);
-        {
-            random::create_for_testing(ctx(&mut scenario));
-        };
-
-        // Player 1 creates a game
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::create_game(bet_coin, true, &config, &clock, ctx(&mut scenario)); // creator bets on heads
-            
-            test::return_shared(config);
-            clock::destroy_for_testing(clock);
-        };
-
-        // Update randomness state (must be done by system)
-        next_tx(&mut scenario, SYSTEM);
-        {
-            let mut rnd = test::take_shared<random::Random>(&scenario);
-            
-            // Set randomness to favor tails (joiner wins)
-            random::update_randomness_state_for_testing(
-                &mut rnd, 
-                0, 
-                x"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", // This should generate tails
-                ctx(&mut scenario)
-            );
-            
-            test::return_shared(rnd);
-        };
-
-        // Player 2 joins the game 
-        next_tx(&mut scenario, PLAYER2);
-        {
-            let mut game = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
-            let rnd = test::take_shared<random::Random>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::join_game(&mut game, bet_coin, &mut config, &rnd, ctx(&mut scenario));
-            
-            test::return_shared(game);
-            test::return_shared(config);
-            test::return_shared(rnd);
-            clock::destroy_for_testing(clock);
-        };
-
-        // Check that joiner (PLAYER2) received winnings
-        next_tx(&mut scenario, PLAYER2);
-        {
-            // Joiner should have received the payout
-            assert!(test::has_most_recent_for_sender<Coin<SUI>>(&scenario), 0);
-            let payout_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-            
-            // Total pot was 200M, fee is 2.5% (5M), so winner gets 195M
-            assert!(coin::value(&payout_coin) == 195_000_000, 1);
-            test::return_to_sender(&scenario, payout_coin);
-        };
-
-        // Check that treasury collected fees
-        next_tx(&mut scenario, ADMIN);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
-            assert!(treasury_balance == 5_000_000, 2); // 2.5% of 200M
-            test::return_shared(config);
-        };
-
-        test::end(scenario);
-    }
-
-    #[test]
-    fun test_join_game_with_overpayment() {
-        let mut scenario = test::begin(ADMIN);
-        
-        // Initialize contract
-        {
-            coin_flip::init_for_testing(ctx(&mut scenario));
-        };
-
-        // Create Random object using system address
-        next_tx(&mut scenario, SYSTEM);
-        {
-            random::create_for_testing(ctx(&mut scenario));
-        };
-
-        // Player 1 creates a game
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::create_game(bet_coin, true, &config, &clock, ctx(&mut scenario)); // creator bets on heads
-            
-            test::return_shared(config);
-            clock::destroy_for_testing(clock);
-        };
-
-        // Update randomness state (must be done by system)
-        next_tx(&mut scenario, SYSTEM);
-        {
-            let mut rnd = test::take_shared<random::Random>(&scenario);
-            
-            // Set randomness 
-            random::update_randomness_state_for_testing(
-                &mut rnd, 
-                0, 
-                x"0000000000000000000000000000000000000000000000000000000000000000", 
-                ctx(&mut scenario)
-            );
-            
-            test::return_shared(rnd);
-        };
-
-        // Player 2 joins the game with overpayment
-        next_tx(&mut scenario, PLAYER2);
-        {
-            let mut game = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
-            let rnd = test::take_shared<random::Random>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            
-            // Pay 1500 instead of required 1000
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_OVERPAY_AMOUNT, ctx(&mut scenario));
-            coin_flip::join_game(&mut game, bet_coin, &mut config, &rnd, ctx(&mut scenario));
-            
-            test::return_shared(game);
-            test::return_shared(config);
-            test::return_shared(rnd);
-            clock::destroy_for_testing(clock);
-        };
-
-        // Check that joiner received change and winner received correct payout
-        next_tx(&mut scenario, PLAYER2);
-        {
-            // Player2 should have received excess payment back (50M)
-            assert!(test::has_most_recent_for_sender<Coin<SUI>>(&scenario), 0);
-            let change_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-            assert!(coin::value(&change_coin) == 50_000_000, 1); // Excess amount (150M - 100M)
-            test::return_to_sender(&scenario, change_coin);
-        };
-
-        next_tx(&mut scenario, PLAYER1);
-        {
-            // Creator should have received the win payout (1950 from 2000 pot minus 50 fee)
-            assert!(test::has_most_recent_for_sender<Coin<SUI>>(&scenario), 0);
-            let payout_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-            assert!(coin::value(&payout_coin) == 195_000_000, 2);
-            test::return_to_sender(&scenario, payout_coin);
-        };
-
-        test::end(scenario);
-    }
-
-    #[test]
-    #[expected_failure(abort_code = coin_flip::ECannotJoinOwnGame)]
-    fun test_cannot_join_own_game() {
-        let mut scenario = test::begin(ADMIN);
-        
-        // Initialize contract
-        {
-            coin_flip::init_for_testing(ctx(&mut scenario));
-        };
-
-        // Create Random object using system address
-        next_tx(&mut scenario, SYSTEM);
-        {
-            random::create_for_testing(ctx(&mut scenario));
-        };
-
-        // Player 1 creates a game
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::create_game(bet_coin, true, &config, &clock, ctx(&mut scenario));
-            
-            test::return_shared(config);
-            clock::destroy_for_testing(clock);
-        };
-
-        // Player 1 tries to join their own game (should fail)
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let mut game = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
-            let rnd = test::take_shared<random::Random>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::join_game(&mut game, bet_coin, &mut config, &rnd, ctx(&mut scenario));
-            
-            test::return_shared(game);
-            test::return_shared(config);
-            test::return_shared(rnd);
-            clock::destroy_for_testing(clock);
-        };
-
-        test::end(scenario);
-    }
-
-    #[test]
-    #[expected_failure(abort_code = coin_flip::EInsufficientPayment)]
-    fun test_insufficient_payment() {
-        let mut scenario = test::begin(ADMIN);
-        
-        // Initialize contract
-        {
-            coin_flip::init_for_testing(ctx(&mut scenario));
-        };
-
-        // Create Random object using system address
-        next_tx(&mut scenario, SYSTEM);
-        {
-            random::create_for_testing(ctx(&mut scenario));
-        };
-
-        // Player 1 creates a game
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::create_game(bet_coin, true, &config, &clock, ctx(&mut scenario));
-            
-            test::return_shared(config);
-            clock::destroy_for_testing(clock);
-        };
-
-        // Player 2 tries to join with insufficient payment (should fail)
-        next_tx(&mut scenario, PLAYER2);
-        {
-            let mut game = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
-            let rnd = test::take_shared<random::Random>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_UNDERPAY_AMOUNT, ctx(&mut scenario)); // Less than required minimum
-            coin_flip::join_game(&mut game, bet_coin, &mut config, &rnd, ctx(&mut scenario));
-            
-            test::return_shared(game);
-            test::return_shared(config);
-            test::return_shared(rnd);
-            clock::destroy_for_testing(clock);
-        };
-
-        test::end(scenario);
-    }
 
     #[test]
     fun test_cancel_game() {
@@ -745,8 +394,276 @@ module sui_coin_flip::coin_flip_tests {
         test::end(scenario);
     }
 
+
+
     #[test]
-    fun test_withdraw_fees_after_games() {
+    fun test_bulk_join_games() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        // Create Random object using system address
+        next_tx(&mut scenario, SYSTEM);
+        {
+            random::create_for_testing(ctx(&mut scenario));
+        };
+
+        // Player 1 creates two games
+        next_tx(&mut scenario, PLAYER1);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let clock = clock::create_for_testing(ctx(&mut scenario));
+            
+            // Create first game
+            let bet_coin1 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin1, true, &config, &clock, ctx(&mut scenario));
+            
+            // Create second game
+            let bet_coin2 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin2, false, &config, &clock, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Update randomness state (must be done by system)
+        next_tx(&mut scenario, SYSTEM);
+        {
+            let mut rnd = test::take_shared<random::Random>(&scenario);
+            
+            random::update_randomness_state_for_testing(
+                &mut rnd, 
+                0, 
+                x"0000000000000000000000000000000000000000000000000000000000000000", 
+                ctx(&mut scenario)
+            );
+            
+            test::return_shared(rnd);
+        };
+
+        // Player 2 joins both games using bulk function
+        next_tx(&mut scenario, PLAYER2);
+        {
+            let game1 = test::take_shared<Game>(&scenario);
+            let game2 = test::take_shared<Game>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            let rnd = test::take_shared<random::Random>(&scenario);
+            
+            // Create vector of games
+            let mut games = vector::empty<Game>();
+            vector::push_back(&mut games, game1);
+            vector::push_back(&mut games, game2);
+            
+            // Create payment for both games (2 * TEST_BET_AMOUNT)
+            let total_payment = coin::mint_for_testing<SUI>(2 * TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Join both games in bulk
+            coin_flip::join_games(games, total_payment, &mut config, &rnd, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            test::return_shared(rnd);
+        };
+
+        // Check that treasury collected fees from both games
+        next_tx(&mut scenario, ADMIN);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let treasury_balance = coin_flip::get_treasury_balance(&config);
+            // Should have 10M mist in fees (2.5% of 400M total pot)
+            assert!(treasury_balance == 10_000_000, 0);
+            test::return_shared(config);
+        };
+
+        // Check that someone received winnings from both games
+        next_tx(&mut scenario, PLAYER1);
+        {
+            // Player1 might have won one or both games
+            while (test::has_most_recent_for_sender<Coin<SUI>>(&scenario)) {
+                let payout_coin = test::take_from_sender<Coin<SUI>>(&scenario);
+                // Each game payout should be 195M (200M - 5M fee)
+                assert!(coin::value(&payout_coin) == 195_000_000, 1);
+                test::return_to_sender(&scenario, payout_coin);
+            };
+        };
+
+        next_tx(&mut scenario, PLAYER2);
+        {
+            // Player2 might have won one or both games
+            while (test::has_most_recent_for_sender<Coin<SUI>>(&scenario)) {
+                let payout_coin = test::take_from_sender<Coin<SUI>>(&scenario);
+                // Each game payout should be 195M (200M - 5M fee)
+                assert!(coin::value(&payout_coin) == 195_000_000, 2);
+                test::return_to_sender(&scenario, payout_coin);
+            };
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::EInsufficientPayment)]
+    fun test_bulk_join_games_insufficient_payment() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        // Create Random object using system address
+        next_tx(&mut scenario, SYSTEM);
+        {
+            random::create_for_testing(ctx(&mut scenario));
+        };
+
+        // Player 1 creates two games
+        next_tx(&mut scenario, PLAYER1);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let clock = clock::create_for_testing(ctx(&mut scenario));
+            
+            // Create first game
+            let bet_coin1 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin1, true, &config, &clock, ctx(&mut scenario));
+            
+            // Create second game
+            let bet_coin2 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin2, false, &config, &clock, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Player 2 tries to join both games with insufficient payment (should fail)
+        next_tx(&mut scenario, PLAYER2);
+        {
+            let game1 = test::take_shared<Game>(&scenario);
+            let game2 = test::take_shared<Game>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            let rnd = test::take_shared<random::Random>(&scenario);
+            
+            // Create vector of games
+            let mut games = vector::empty<Game>();
+            vector::push_back(&mut games, game1);
+            vector::push_back(&mut games, game2);
+            
+            // Create insufficient payment (only enough for 1 game, not 2)
+            let insufficient_payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Try to join both games with insufficient payment (should fail)
+            coin_flip::join_games(games, insufficient_payment, &mut config, &rnd, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            test::return_shared(rnd);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::EGameNotFound)]
+    fun test_bulk_join_games_empty_vector() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        // Create Random object using system address
+        next_tx(&mut scenario, SYSTEM);
+        {
+            random::create_for_testing(ctx(&mut scenario));
+        };
+
+        // Player 2 tries to join empty games vector (should fail)
+        next_tx(&mut scenario, PLAYER2);
+        {
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            let rnd = test::take_shared<random::Random>(&scenario);
+            
+            // Create empty vector of games
+            let empty_games = vector::empty<Game>();
+            
+            // Create payment
+            let payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Try to join empty games vector (should fail)
+            coin_flip::join_games(empty_games, payment, &mut config, &rnd, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            test::return_shared(rnd);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::ECannotJoinOwnGame)]
+    fun test_bulk_join_games_own_games() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        // Create Random object using system address
+        next_tx(&mut scenario, SYSTEM);
+        {
+            random::create_for_testing(ctx(&mut scenario));
+        };
+
+        // Player 1 creates two games
+        next_tx(&mut scenario, PLAYER1);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let clock = clock::create_for_testing(ctx(&mut scenario));
+            
+            // Create first game
+            let bet_coin1 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin1, true, &config, &clock, ctx(&mut scenario));
+            
+            // Create second game
+            let bet_coin2 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin2, false, &config, &clock, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Player 1 tries to join their own games (should fail)
+        next_tx(&mut scenario, PLAYER1);
+        {
+            let game1 = test::take_shared<Game>(&scenario);
+            let game2 = test::take_shared<Game>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            let rnd = test::take_shared<random::Random>(&scenario);
+            
+            // Create vector of games
+            let mut games = vector::empty<Game>();
+            vector::push_back(&mut games, game1);
+            vector::push_back(&mut games, game2);
+            
+            // Create payment for both games
+            let payment = coin::mint_for_testing<SUI>(2 * TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Try to join own games (should fail)
+            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            test::return_shared(rnd);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::EContractPaused)]
+    fun test_bulk_join_games_when_paused() {
         let mut scenario = test::begin(ADMIN);
         
         // Initialize contract
@@ -772,6 +689,75 @@ module sui_coin_flip::coin_flip_tests {
             clock::destroy_for_testing(clock);
         };
 
+        // Admin pauses the contract
+        next_tx(&mut scenario, ADMIN);
+        {
+            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            
+            coin_flip::set_pause_state(&admin_cap, &mut config, true, ctx(&mut scenario));
+            
+            test::return_to_sender(&scenario, admin_cap);
+            test::return_shared(config);
+        };
+
+        // Player 2 tries to join games while contract is paused (should fail)
+        next_tx(&mut scenario, PLAYER2);
+        {
+            let game = test::take_shared<Game>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            let rnd = test::take_shared<random::Random>(&scenario);
+            
+            // Create vector of games
+            let mut games = vector::empty<Game>();
+            vector::push_back(&mut games, game);
+            
+            // Create payment
+            let payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Try to join games while paused (should fail)
+            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            test::return_shared(rnd);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    fun test_bulk_join_games_with_overpayment() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        // Create Random object using system address
+        next_tx(&mut scenario, SYSTEM);
+        {
+            random::create_for_testing(ctx(&mut scenario));
+        };
+
+        // Player 1 creates two games
+        next_tx(&mut scenario, PLAYER1);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let clock = clock::create_for_testing(ctx(&mut scenario));
+            
+            // Create first game
+            let bet_coin1 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin1, true, &config, &clock, ctx(&mut scenario));
+            
+            // Create second game
+            let bet_coin2 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin2, false, &config, &clock, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
         // Update randomness state (must be done by system)
         next_tx(&mut scenario, SYSTEM);
         {
@@ -787,53 +773,120 @@ module sui_coin_flip::coin_flip_tests {
             test::return_shared(rnd);
         };
 
-        // Player 2 joins the game 
+        // Player 2 joins both games with overpayment
         next_tx(&mut scenario, PLAYER2);
         {
-            let mut game = test::take_shared<Game>(&scenario);
+            let game1 = test::take_shared<Game>(&scenario);
+            let game2 = test::take_shared<Game>(&scenario);
             let mut config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
             
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::join_game(&mut game, bet_coin, &mut config, &rnd, ctx(&mut scenario));
+            // Create vector of games
+            let mut games = vector::empty<Game>();
+            vector::push_back(&mut games, game1);
+            vector::push_back(&mut games, game2);
             
-            test::return_shared(game);
+            // Create overpayment (3x required amount instead of 2x)
+            let overpayment = coin::mint_for_testing<SUI>(3 * TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Join both games with overpayment
+            coin_flip::join_games(games, overpayment, &mut config, &rnd, ctx(&mut scenario));
+            
             test::return_shared(config);
             test::return_shared(rnd);
+        };
+
+        // Check that Player 2 received excess payment back
+        next_tx(&mut scenario, PLAYER2);
+        {
+            // Player2 should have received excess payment back (1 * TEST_BET_AMOUNT)
+            let mut refund_received = false;
+            while (test::has_most_recent_for_sender<Coin<SUI>>(&scenario)) {
+                let coin = test::take_from_sender<Coin<SUI>>(&scenario);
+                let coin_value = coin::value(&coin);
+                
+                if (coin_value == TEST_BET_AMOUNT) {
+                    // This is the excess refund
+                    refund_received = true;
+                    test::return_to_sender(&scenario, coin);
+                } else {
+                    // This is a game win payout
+                    assert!(coin_value == 195_000_000, 1); // 200M - 5M fee
+                    test::return_to_sender(&scenario, coin);
+                };
+            };
+            
+            assert!(refund_received, 0); // Ensure we got the refund
+        };
+
+        // Check that treasury collected fees from both games
+        next_tx(&mut scenario, ADMIN);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let treasury_balance = coin_flip::get_treasury_balance(&config);
+            // Should have 10M mist in fees (2.5% of 400M total pot)
+            assert!(treasury_balance == 10_000_000, 2);
+            test::return_shared(config);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::EGameNotFound)]
+    fun test_bulk_join_games_inactive_games() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        // Create Random object using system address
+        next_tx(&mut scenario, SYSTEM);
+        {
+            random::create_for_testing(ctx(&mut scenario));
+        };
+
+        // Player 1 creates a game
+        next_tx(&mut scenario, PLAYER1);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let clock = clock::create_for_testing(ctx(&mut scenario));
+            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin, true, &config, &clock, ctx(&mut scenario));
+            
+            test::return_shared(config);
             clock::destroy_for_testing(clock);
         };
 
-        // Admin withdraws fees
+        // Set the game as inactive using test helper
         next_tx(&mut scenario, ADMIN);
         {
-            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
-            
-            // Should have 5M mist in fees (2.5% of 200M)
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
-            assert!(treasury_balance == 5_000_000, 0);
-            
-            // Withdraw all fees (no amount parameter needed anymore)
-            coin_flip::withdraw_fees(&admin_cap, &mut config, ctx(&mut scenario));
-            
-            test::return_to_sender(&scenario, admin_cap);
-            test::return_shared(config);
+            let mut game = test::take_shared<Game>(&scenario);
+            coin_flip::set_game_inactive_for_testing(&mut game);
+            test::return_shared(game);
         };
 
-        // Check admin received the fees
-        next_tx(&mut scenario, ADMIN);
+        // Player 2 tries to join inactive game (should fail)
+        next_tx(&mut scenario, PLAYER2);
         {
-            assert!(test::has_most_recent_for_sender<Coin<SUI>>(&scenario), 0);
-            let fee_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-            assert!(coin::value(&fee_coin) == 5_000_000, 1);
-            test::return_to_sender(&scenario, fee_coin);
+            let game = test::take_shared<Game>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            let rnd = test::take_shared<random::Random>(&scenario);
             
-            // Treasury should now be empty
-            let config = test::take_shared<GameConfig>(&scenario);
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
-            assert!(treasury_balance == 0, 2);
+            // Create vector with inactive game
+            let mut games = vector::empty<Game>();
+            vector::push_back(&mut games, game);
+            
+            // Create payment
+            let payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Try to join inactive game (should fail)
+            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            
             test::return_shared(config);
+            test::return_shared(rnd);
         };
 
         test::end(scenario);

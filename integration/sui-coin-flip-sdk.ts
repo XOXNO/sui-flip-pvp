@@ -843,6 +843,42 @@ export class CoinFlipSDK {
   }
 
   /**
+   * Get detailed balance information for debugging
+   */
+  async getDetailedBalance(userAddress: string): Promise<{
+    totalBalance: string;
+    totalBalanceSui: string;
+    coinCount: number;
+    coins: Array<{ id: string; balance: string; balanceSui: string; }>;
+  }> {
+    try {
+      const [balance, coins] = await Promise.all([
+        this.client.getBalance({
+          owner: userAddress,
+          coinType: '0x2::sui::SUI',
+        }),
+        this.client.getCoins({
+          owner: userAddress,
+          coinType: '0x2::sui::SUI',
+        })
+      ]);
+
+      return {
+        totalBalance: balance.totalBalance,
+        totalBalanceSui: CoinFlipSDK.mistToSui(balance.totalBalance),
+        coinCount: coins.data.length,
+        coins: coins.data.map(coin => ({
+          id: coin.coinObjectId,
+          balance: coin.balance,
+          balanceSui: CoinFlipSDK.mistToSui(coin.balance)
+        }))
+      };
+    } catch (error) {
+      throw new Error(`Failed to get detailed balance: ${error}`);
+    }
+  }
+
+  /**
    * Check if user has enough balance for a transaction
    */
   async canAffordTransaction(
@@ -925,6 +961,67 @@ export class CoinFlipSDK {
       return objects.data.length > 0 ? objects.data[0].data?.objectId || null : null;
     } catch (error) {
       return null;
+    }
+  }
+
+  /**
+   * Debug transaction requirements and provide helpful suggestions
+   */
+  async debugTransactionRequirements(
+    userAddress: string, 
+    betAmount: string, 
+    transactionType: 'create' | 'join' | 'cancel'
+  ): Promise<{
+    canProceed: boolean;
+    userBalance: string;
+    balanceInSui: string;
+    required: string;
+    requiredInSui: string;
+    gasEstimate: string;
+    gasEstimateInSui: string;
+    coinCount: number;
+    suggestions: string[];
+  }> {
+    try {
+      const [detailedBalance, affordability] = await Promise.all([
+        this.getDetailedBalance(userAddress),
+        this.canAffordTransaction(userAddress, betAmount, transactionType)
+      ]);
+
+      const suggestions: string[] = [];
+      
+      if (!affordability.canAfford) {
+        if (detailedBalance.totalBalance === '0') {
+          suggestions.push('You have no SUI tokens! Get some from the faucet.');
+          if (this.network === 'testnet') {
+            suggestions.push('Testnet faucet: https://docs.sui.io/guides/developer/getting-started/get-coins');
+          } else if (this.network === 'devnet') {
+            suggestions.push('Devnet faucet: https://docs.sui.io/guides/developer/getting-started/get-coins');
+          }
+        } else {
+          const shortfallSui = CoinFlipSDK.mistToSui(affordability.shortfall!);
+          suggestions.push(`You need ${shortfallSui} more SUI to complete this transaction.`);
+          suggestions.push('Consider reducing your bet amount or getting more SUI.');
+        }
+      }
+
+      if (detailedBalance.coinCount > 10) {
+        suggestions.push('You have many small coin objects. Consider merging them to reduce gas costs.');
+      }
+
+      return {
+        canProceed: affordability.canAfford,
+        userBalance: affordability.userBalance,
+        balanceInSui: detailedBalance.totalBalanceSui,
+        required: affordability.totalRequired,
+        requiredInSui: CoinFlipSDK.mistToSui(affordability.totalRequired),
+        gasEstimate: affordability.gasEstimate,
+        gasEstimateInSui: CoinFlipSDK.mistToSui(affordability.gasEstimate),
+        coinCount: detailedBalance.coinCount,
+        suggestions
+      };
+    } catch (error) {
+      throw new Error(`Failed to debug transaction requirements: ${error}`);
     }
   }
 }

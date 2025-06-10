@@ -200,80 +200,120 @@ module sui_coin_flip::coin_flip {
         transfer::share_object(game);
     }
 
-    /// Join an existing game and flip the coin using SUI's native randomness
+
+    /// Join multiple games by consuming them (games are deleted after completion)
+    /// This allows passing a vector<Game> and is much cleaner than individual parameters
     #[allow(lint(public_random))]
-    public entry fun join_game(
-        game: &mut Game,
-        mut bet_coin: Coin<SUI>,
+    public entry fun join_games(
+        games_raw: vector<Game>,
+        payment: Coin<SUI>,
         config: &mut GameConfig,
         rnd: &Random,
         ctx: &mut TxContext
     ) {
+        let mut payment_coin = payment;
+        let mut games = games_raw;
         let joiner = tx_context::sender(ctx);
-        let payment_amount = coin::value(&bet_coin);
+        let payment_amount = coin::value(&payment_coin);
+        let games_count = vector::length(&games);
         
         // Security checks
         assert!(!config.is_paused, EContractPaused);
-        assert!(game.is_active, EGameNotFound);
-        assert!(joiner != game.creator, ECannotJoinOwnGame);
-        assert!(payment_amount >= game.bet_amount, EInsufficientPayment);
-        
+        assert!(games_count > 0, EGameNotFound);
 
-
-        // Mark game as inactive to prevent reentrancy
-        game.is_active = false;
-
-        // Handle exact payment - refund excess if any
-        if (payment_amount > game.bet_amount) {
-            let excess = payment_amount - game.bet_amount;
-            let excess_coin = coin::split(&mut bet_coin, excess, ctx);
-            transfer::public_transfer(excess_coin, joiner);
+        // Calculate total required bet amount and validate all games
+        let mut total_required = 0u64;
+        let mut i = 0;
+        while (i < games_count) {
+            let game = vector::borrow(&games, i);
+            assert!(game.is_active, EGameNotFound);
+            assert!(joiner != game.creator, ECannotJoinOwnGame);
+            total_required = total_required + game.bet_amount;
+            i = i + 1;
         };
 
-        // Add joiner's exact bet to the game balance
-        balance::join(&mut game.balance, coin::into_balance(bet_coin));
+        // Ensure payment covers all games
+        assert!(payment_amount >= total_required, EInsufficientPayment);
 
-        // Determine joiner's choice (opposite of creator)
-        let joiner_choice = CoinSide { is_heads: !game.creator_choice.is_heads };
-
-        // Generate secure randomness using SUI's native randomness beacon
+        // Create a single random generator for all games
         let mut generator = random::new_generator(rnd, ctx);
-        let random_value = random::generate_bool(&mut generator);
-        let coin_flip_result = CoinSide { is_heads: random_value };
 
-        // Determine winner and loser
-        let (winner, loser) = if (coin_flip_result.is_heads == game.creator_choice.is_heads) {
-            (game.creator, joiner)
-        } else {
-            (joiner, game.creator)
+        // Process each game by consuming it
+        while (!vector::is_empty(&games)) {
+            let game = vector::pop_back(&mut games);
+            
+            // Extract game data
+            let Game {
+                id,
+                creator,
+                bet_amount,
+                creator_choice,
+                balance,
+                is_active: _,
+                created_at_ms: _,
+            } = game;
+
+            // Extract exact bet amount from payment
+            let bet_coin = coin::split(&mut payment_coin, bet_amount, ctx);
+            
+            // Make balance mutable and add joiner's bet
+            let mut balance = balance;
+            balance::join(&mut balance, coin::into_balance(bet_coin));
+
+            // Determine joiner's choice (opposite of creator)
+            let joiner_choice = CoinSide { is_heads: !creator_choice.is_heads };
+
+            // Generate secure randomness for this game
+            let random_value = random::generate_bool(&mut generator);
+            let coin_flip_result = CoinSide { is_heads: random_value };
+
+            // Determine winner and loser
+            let (winner, loser) = if (coin_flip_result.is_heads == creator_choice.is_heads) {
+                (creator, joiner)
+            } else {
+                (joiner, creator)
+            };
+
+            // Calculate payouts
+            let total_pot = balance::value(&balance);
+            let fee_amount = (total_pot * config.fee_percentage) / FEE_BASE;
+            let winner_payout = total_pot - fee_amount;
+
+            // Extract fee for treasury
+            let fee_balance = balance::split(&mut balance, fee_amount);
+            balance::join(&mut config.treasury_balance, fee_balance);
+            
+            // Send remaining balance to winner
+            let winner_coin = coin::from_balance(balance, ctx);
+            transfer::public_transfer(winner_coin, winner);
+
+            // Emit game joined event
+            event::emit(GameJoined {
+                game_id: object::uid_to_address(&id),
+                joiner,
+                joiner_choice_heads: joiner_choice.is_heads,
+                winner,
+                loser,
+                total_pot,
+                winner_payout,
+                fee_collected: fee_amount,
+                coin_flip_result_heads: coin_flip_result.is_heads,
+            });
+
+            // Delete the game object (no longer needed)
+            object::delete(id);
         };
 
-        // Calculate payouts with better precision handling
-        let total_pot = balance::value(&game.balance);
-        let fee_amount = (total_pot * config.fee_percentage) / FEE_BASE;
-        let winner_payout = total_pot - fee_amount;
+        // Clean up empty vector
+        vector::destroy_empty(games);
 
-        // Extract fee for treasury
-        let fee_balance = balance::split(&mut game.balance, fee_amount);
-        balance::join(&mut config.treasury_balance, fee_balance);
-        
-        // Send remaining balance to winner
-        let winner_balance = balance::withdraw_all(&mut game.balance);
-        let winner_coin = coin::from_balance(winner_balance, ctx);
-        transfer::public_transfer(winner_coin, winner);
-
-        // Emit game joined event
-        event::emit(GameJoined {
-            game_id: object::uid_to_address(&game.id),
-            joiner,
-            joiner_choice_heads: joiner_choice.is_heads,
-            winner,
-            loser,
-            total_pot,
-            winner_payout,
-            fee_collected: fee_amount,
-            coin_flip_result_heads: coin_flip_result.is_heads,
-        });
+        // Refund any excess payment
+        let remaining_payment = coin::value(&payment_coin);
+        if (remaining_payment > 0) {
+            transfer::public_transfer(payment_coin, joiner);
+        } else {
+            coin::destroy_zero(payment_coin);
+        };
     }
 
     /// Cancel a pending game and get refund (with timeout check)

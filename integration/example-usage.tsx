@@ -71,6 +71,10 @@ const CoinFlipGame: React.FC = () => {
     try {
       const betAmountMist = CoinFlipSDK.suiToMist(betAmount);
       
+      // Get detailed balance for debugging
+      const detailedBalance = await sdk.getDetailedBalance(currentAccount.address);
+      console.log('Detailed balance:', detailedBalance);
+      
       // Check if user can afford the transaction
       const affordability = await sdk.canAffordTransaction(
         currentAccount.address, 
@@ -78,13 +82,20 @@ const CoinFlipGame: React.FC = () => {
         'create'
       );
       
+      console.log('Affordability check:', affordability);
+      
       if (!affordability.canAfford) {
+        const faucetMessage = detailedBalance.totalBalanceSui === '0' 
+          ? '\n\n💡 You have no SUI tokens! Get some from the faucet:\nhttps://docs.sui.io/guides/developer/getting-started/get-coins' 
+          : '';
+          
         alert(
           `Insufficient balance!\n` +
           `You need ${CoinFlipSDK.mistToSui(affordability.totalRequired)} SUI total ` +
           `(${betAmount} SUI bet + ${CoinFlipSDK.mistToSui(affordability.gasEstimate)} SUI gas)\n` +
           `But you only have ${CoinFlipSDK.mistToSui(affordability.userBalance)} SUI\n` +
-          `Shortfall: ${CoinFlipSDK.mistToSui(affordability.shortfall!)} SUI`
+          `Shortfall: ${CoinFlipSDK.mistToSui(affordability.shortfall!)} SUI` +
+          faucetMessage
         );
         return;
       }
@@ -103,7 +114,21 @@ const CoinFlipGame: React.FC = () => {
           },
           onError: (error) => {
             console.error('Failed to create game:', error);
-            alert(`Failed to create game: ${error}`);
+            
+            // Better error handling for gas issues
+            if (error.message?.includes('gas') || error.message?.includes('insufficient')) {
+              alert(
+                `Transaction failed due to insufficient gas or balance.\n\n` +
+                `Debug info:\n` +
+                `- Your balance: ${detailedBalance.totalBalanceSui} SUI\n` +
+                `- Coin count: ${detailedBalance.coinCount}\n` +
+                `- Required: ${CoinFlipSDK.mistToSui(affordability.totalRequired)} SUI\n\n` +
+                `Try getting more SUI from the faucet if on testnet:\n` +
+                `https://docs.sui.io/guides/developer/getting-started/get-coins`
+              );
+            } else {
+              alert(`Failed to create game: ${error.message || error}`);
+            }
           },
         }
       );
@@ -264,10 +289,55 @@ const CoinFlipGame: React.FC = () => {
       
       {/* User Info */}
       <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-        <h3 className="text-lg font-semibold mb-2">Your Info</h3>
+        <div className="flex justify-between items-start mb-2">
+          <h3 className="text-lg font-semibold">Your Info</h3>
+          <button
+            onClick={async () => {
+              if (!currentAccount?.address) return;
+              try {
+                const debug = await sdk.debugTransactionRequirements(
+                  currentAccount.address, 
+                  CoinFlipSDK.suiToMist(betAmount), 
+                  'create'
+                );
+                console.log('Debug info:', debug);
+                alert(
+                  `Debug Info:\n` +
+                  `Balance: ${debug.balanceInSui} SUI\n` +
+                  `Required: ${debug.requiredInSui} SUI\n` +
+                  `Gas: ${debug.gasEstimateInSui} SUI\n` +
+                  `Coin Count: ${debug.coinCount}\n` +
+                  `Can Proceed: ${debug.canProceed}\n\n` +
+                  `Suggestions:\n${debug.suggestions.join('\n')}`
+                );
+              } catch (error) {
+                console.error('Debug failed:', error);
+              }
+            }}
+            className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Debug Balance
+          </button>
+        </div>
         <p><strong>Address:</strong> {CoinFlipSDK.formatAddress(currentAccount.address)}</p>
         <p><strong>Balance:</strong> {CoinFlipSDK.mistToSui(userBalance)} SUI</p>
         {isAdmin && <p className="text-green-600"><strong>Admin Access:</strong> Yes</p>}
+        
+        {userBalance === '0' && (
+          <div className="mt-2 p-2 bg-yellow-100 border border-yellow-400 rounded text-sm">
+            <p className="text-yellow-800">
+              ⚠️ You have no SUI tokens! Get some from the faucet: <br/>
+              <a 
+                href="https://docs.sui.io/guides/developer/getting-started/get-coins" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-blue-600 underline"
+              >
+                https://docs.sui.io/guides/developer/getting-started/get-coins
+              </a>
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Game Config */}

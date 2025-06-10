@@ -83,6 +83,7 @@ export class CoinFlipEventsListener {
   async startListening(): Promise<void> {
     try {
       // Subscribe to GameCreated events
+      // @ts-ignore - deprecation warning, but current stable API
       const gameCreatedUnsubscribe = await this.client.subscribeEvent({
         filter: {
           MoveEventType: `${this.packageId}::coin_flip::GameCreated`
@@ -91,6 +92,7 @@ export class CoinFlipEventsListener {
       });
 
       // Subscribe to GameJoined events  
+      // @ts-ignore - deprecation warning, but current stable API
       const gameJoinedUnsubscribe = await this.client.subscribeEvent({
         filter: {
           MoveEventType: `${this.packageId}::coin_flip::GameJoined`
@@ -99,6 +101,7 @@ export class CoinFlipEventsListener {
       });
 
       // Subscribe to GameCancelled events
+      // @ts-ignore - deprecation warning, but current stable API
       const gameCancelledUnsubscribe = await this.client.subscribeEvent({
         filter: {
           MoveEventType: `${this.packageId}::coin_flip::GameCancelled`
