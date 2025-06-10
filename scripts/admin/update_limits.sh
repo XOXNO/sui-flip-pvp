@@ -60,7 +60,7 @@ echo -e "  Package: ${YELLOW}$PACKAGE_ID${NC}"
 echo -e "  GameConfig: ${YELLOW}$GAME_CONFIG${NC}"
 echo -e "  AdminCap: ${YELLOW}$ADMIN_CAP${NC}"
 
-# Execute the transaction
+# Execute the transaction and capture both stdout and stderr
 TX_OUTPUT=$(sui client call \
     --package "$PACKAGE_ID" \
     --module "coin_flip" \
@@ -69,8 +69,30 @@ TX_OUTPUT=$(sui client call \
     --gas-budget "$GAS_BUDGET" \
     --json 2>&1)
 
+# Extract JSON by finding the line with the opening brace and taking everything from there
+# This approach is more reliable across different shells and operating systems
+JSON_START_LINE=$(echo "$TX_OUTPUT" | grep -n '^{' | head -1 | cut -d: -f1)
+
+if [ -z "$JSON_START_LINE" ]; then
+    echo -e "${RED}Failed to find JSON in transaction output${NC}"
+    echo "Raw output:"
+    echo "$TX_OUTPUT"
+    exit 1
+fi
+
+# Extract everything from the JSON start line to the end
+CLEAN_OUTPUT=$(echo "$TX_OUTPUT" | tail -n +$JSON_START_LINE)
+
+# Validate that we have valid JSON
+if ! echo "$CLEAN_OUTPUT" | jq . > /dev/null 2>&1; then
+    echo -e "${RED}Invalid JSON in transaction output${NC}"
+    echo "Extracted content:"
+    echo "$CLEAN_OUTPUT"
+    exit 1
+fi
+
 # Check if transaction was successful
-TX_STATUS=$(echo "$TX_OUTPUT" | jq -r '.effects.status.status' 2>/dev/null || echo "failed")
+TX_STATUS=$(echo "$CLEAN_OUTPUT" | jq -r '.effects.status.status' 2>/dev/null || echo "failed")
 
 if [ "$TX_STATUS" != "success" ]; then
     echo -e "${RED}Transaction failed!${NC}"
@@ -78,7 +100,7 @@ if [ "$TX_STATUS" != "success" ]; then
     exit 1
 fi
 
-TX_DIGEST=$(echo "$TX_OUTPUT" | jq -r '.digest')
+TX_DIGEST=$(echo "$CLEAN_OUTPUT" | jq -r '.digest')
 
 # Update config with new limits
 UPDATED_CONFIG=$(jq \

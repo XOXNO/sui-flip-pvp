@@ -73,8 +73,29 @@ TX_OUTPUT=$(sui client call \
     --gas-budget "$GAS_BUDGET" \
     --json 2>&1)
 
+# Extract JSON by finding the line with the opening brace and taking everything from there
+JSON_START_LINE=$(echo "$TX_OUTPUT" | grep -n '^{' | head -1 | cut -d: -f1)
+
+if [ -z "$JSON_START_LINE" ]; then
+    echo -e "${RED}Failed to find JSON in transaction output${NC}"
+    echo "Raw output:"
+    echo "$TX_OUTPUT"
+    exit 1
+fi
+
+# Extract everything from the JSON start line to the end
+CLEAN_OUTPUT=$(echo "$TX_OUTPUT" | tail -n +$JSON_START_LINE)
+
+# Validate that we have valid JSON
+if ! echo "$CLEAN_OUTPUT" | jq . > /dev/null 2>&1; then
+    echo -e "${RED}Invalid JSON in transaction output${NC}"
+    echo "Extracted content:"
+    echo "$CLEAN_OUTPUT"
+    exit 1
+fi
+
 # Check if transaction was successful
-TX_STATUS=$(echo "$TX_OUTPUT" | jq -r '.effects.status.status' 2>/dev/null || echo "failed")
+TX_STATUS=$(echo "$CLEAN_OUTPUT" | jq -r '.effects.status.status' 2>/dev/null || echo "failed")
 
 if [ "$TX_STATUS" != "success" ]; then
     echo -e "${RED}Transaction failed!${NC}"
@@ -82,7 +103,7 @@ if [ "$TX_STATUS" != "success" ]; then
     exit 1
 fi
 
-TX_DIGEST=$(echo "$TX_OUTPUT" | jq -r '.digest')
+TX_DIGEST=$(echo "$CLEAN_OUTPUT" | jq -r '.digest')
 
 # Update config with withdrawal info
 UPDATED_CONFIG=$(jq \
