@@ -19,7 +19,7 @@ module sui_coin_flip::coin_flip_tests {
     const SYSTEM: address = @0x0;
     
     // Test amounts in mist (1 SUI = 1,000,000,000 mist)
-    const TEST_BET_AMOUNT: u64 = 100_000_000; // 0.1 SUI
+    const TEST_BET_AMOUNT: u64 = 200_000_000; // 0.2 SUI
 
     #[test]
     fun test_init() {
@@ -69,16 +69,6 @@ module sui_coin_flip::coin_flip_tests {
         test::end(scenario);
     }
 
-
-
-
-
-
-
-
-
-
-
     #[test]
     fun test_cancel_game() {
         let mut scenario = test::begin(PLAYER1);
@@ -114,7 +104,7 @@ module sui_coin_flip::coin_flip_tests {
         {
             assert!(test::has_most_recent_for_sender<Coin<SUI>>(&scenario), 0);
             let refund_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-            assert!(coin::value(&refund_coin) == 100_000_000, 1);
+            assert!(coin::value(&refund_coin) == 200_000_000, 1);
             test::return_to_sender(&scenario, refund_coin);
         };
 
@@ -260,7 +250,7 @@ module sui_coin_flip::coin_flip_tests {
             let (creator, bet_amount, creator_choice_heads, is_active, _created_at) = coin_flip::get_game_info(&game);
             
             assert!(creator == PLAYER1, 0);
-            assert!(bet_amount == 100_000_000, 1);
+            assert!(bet_amount == 200_000_000, 1);
             assert!(creator_choice_heads == true, 2);
             assert!(is_active == true, 3);
             
@@ -394,8 +384,6 @@ module sui_coin_flip::coin_flip_tests {
         test::end(scenario);
     }
 
-
-
     #[test]
     fun test_bulk_join_games() {
         let mut scenario = test::begin(ADMIN);
@@ -472,8 +460,8 @@ module sui_coin_flip::coin_flip_tests {
         {
             let config = test::take_shared<GameConfig>(&scenario);
             let treasury_balance = coin_flip::get_treasury_balance(&config);
-            // Should have 10M mist in fees (2.5% of 400M total pot)
-            assert!(treasury_balance == 10_000_000, 0);
+            // Should have 20M mist in fees (2.5% of 800M total pot)
+            assert!(treasury_balance == 20_000_000, 0);
             test::return_shared(config);
         };
 
@@ -483,8 +471,8 @@ module sui_coin_flip::coin_flip_tests {
             // Player1 might have won one or both games
             while (test::has_most_recent_for_sender<Coin<SUI>>(&scenario)) {
                 let payout_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-                // Each game payout should be 195M (200M - 5M fee)
-                assert!(coin::value(&payout_coin) == 195_000_000, 1);
+                // Each game payout should be 390M (400M total pot - 10M fee)
+                assert!(coin::value(&payout_coin) == 390_000_000, 1);
                 test::return_to_sender(&scenario, payout_coin);
             };
         };
@@ -494,8 +482,8 @@ module sui_coin_flip::coin_flip_tests {
             // Player2 might have won one or both games
             while (test::has_most_recent_for_sender<Coin<SUI>>(&scenario)) {
                 let payout_coin = test::take_from_sender<Coin<SUI>>(&scenario);
-                // Each game payout should be 195M (200M - 5M fee)
-                assert!(coin::value(&payout_coin) == 195_000_000, 2);
+                // Each game payout should be 390M (400M total pot - 10M fee)
+                assert!(coin::value(&payout_coin) == 390_000_000, 2);
                 test::return_to_sender(&scenario, payout_coin);
             };
         };
@@ -811,7 +799,7 @@ module sui_coin_flip::coin_flip_tests {
                     test::return_to_sender(&scenario, coin);
                 } else {
                     // This is a game win payout
-                    assert!(coin_value == 195_000_000, 1); // 200M - 5M fee
+                    assert!(coin_value == 390_000_000, 1); // 400M total pot - 10M fee
                     test::return_to_sender(&scenario, coin);
                 };
             };
@@ -824,8 +812,8 @@ module sui_coin_flip::coin_flip_tests {
         {
             let config = test::take_shared<GameConfig>(&scenario);
             let treasury_balance = coin_flip::get_treasury_balance(&config);
-            // Should have 10M mist in fees (2.5% of 400M total pot)
-            assert!(treasury_balance == 10_000_000, 2);
+            // Should have 20M mist in fees (2.5% of 800M total pot)
+            assert!(treasury_balance == 20_000_000, 2);
             test::return_shared(config);
         };
 
@@ -887,6 +875,311 @@ module sui_coin_flip::coin_flip_tests {
             
             test::return_shared(config);
             test::return_shared(rnd);
+        };
+
+        test::end(scenario);
+    }
+
+    // ======== Max Games Per Transaction Tests ========
+
+    #[test]
+    fun test_default_max_games_limit() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        next_tx(&mut scenario, ADMIN);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            
+            // Check default max games limit (should be 100)
+            let max_games = coin_flip::get_max_games_per_transaction(&config);
+            assert!(max_games == 100, 0);
+            
+            test::return_shared(config);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    fun test_admin_update_max_games_limit() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        next_tx(&mut scenario, ADMIN);
+        {
+            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            
+            // Test default value
+            assert!(coin_flip::get_max_games_per_transaction(&config) == 100, 0);
+            
+            // Update to 50
+            coin_flip::update_max_games_per_transaction(&admin_cap, &mut config, 50, ctx(&mut scenario));
+            assert!(coin_flip::get_max_games_per_transaction(&config) == 50, 1);
+            
+            // Update to 1 for strict testing
+            coin_flip::update_max_games_per_transaction(&admin_cap, &mut config, 1, ctx(&mut scenario));
+            assert!(coin_flip::get_max_games_per_transaction(&config) == 1, 2);
+            
+            // Update back to reasonable value
+            coin_flip::update_max_games_per_transaction(&admin_cap, &mut config, 25, ctx(&mut scenario));
+            assert!(coin_flip::get_max_games_per_transaction(&config) == 25, 3);
+            
+            test::return_to_sender(&scenario, admin_cap);
+            test::return_shared(config);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::EInvalidMaxGames)]
+    fun test_invalid_max_games_zero() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        next_tx(&mut scenario, ADMIN);
+        {
+            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            
+            // Try to set limit to 0 - should fail
+            coin_flip::update_max_games_per_transaction(&admin_cap, &mut config, 0, ctx(&mut scenario));
+            
+            test::return_to_sender(&scenario, admin_cap);
+            test::return_shared(config);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::EInvalidMaxGames)]
+    fun test_invalid_max_games_too_high() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        next_tx(&mut scenario, ADMIN);
+        {
+            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            
+            // Try to set limit above 1000 - should fail
+            coin_flip::update_max_games_per_transaction(&admin_cap, &mut config, 1001, ctx(&mut scenario));
+            
+            test::return_to_sender(&scenario, admin_cap);
+            test::return_shared(config);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::ETooManyGames)]
+    fun test_bulk_join_exceeds_max_games_limit() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        // Create Random object using system address
+        next_tx(&mut scenario, SYSTEM);
+        {
+            random::create_for_testing(ctx(&mut scenario));
+        };
+
+        // Admin sets max games limit to 1
+        next_tx(&mut scenario, ADMIN);
+        {
+            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            
+            coin_flip::update_max_games_per_transaction(&admin_cap, &mut config, 1, ctx(&mut scenario));
+            
+            test::return_to_sender(&scenario, admin_cap);
+            test::return_shared(config);
+        };
+
+        // Player 1 creates two games
+        next_tx(&mut scenario, PLAYER1);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let clock = clock::create_for_testing(ctx(&mut scenario));
+            
+            // Create first game
+            let bet_coin1 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin1, true, &config, &clock, ctx(&mut scenario));
+            
+            // Create second game
+            let bet_coin2 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin2, false, &config, &clock, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Player 2 tries to join both games when limit is 1 (should fail)
+        next_tx(&mut scenario, PLAYER2);
+        {
+            let game1 = test::take_shared<Game>(&scenario);
+            let game2 = test::take_shared<Game>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            let rnd = test::take_shared<random::Random>(&scenario);
+            
+            // Create vector of 2 games (exceeds limit of 1)
+            let mut games = vector::empty<Game>();
+            vector::push_back(&mut games, game1);
+            vector::push_back(&mut games, game2);
+            
+            // Create payment for both games
+            let payment = coin::mint_for_testing<SUI>(2 * TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Try to join 2 games when limit is 1 (should fail with ETooManyGames)
+            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            test::return_shared(rnd);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    fun test_bulk_join_within_max_games_limit() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        // Create Random object using system address
+        next_tx(&mut scenario, SYSTEM);
+        {
+            random::create_for_testing(ctx(&mut scenario));
+        };
+
+        // Admin sets max games limit to 2
+        next_tx(&mut scenario, ADMIN);
+        {
+            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            
+            coin_flip::update_max_games_per_transaction(&admin_cap, &mut config, 2, ctx(&mut scenario));
+            
+            test::return_to_sender(&scenario, admin_cap);
+            test::return_shared(config);
+        };
+
+        // Player 1 creates two games
+        next_tx(&mut scenario, PLAYER1);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let clock = clock::create_for_testing(ctx(&mut scenario));
+            
+            // Create first game
+            let bet_coin1 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin1, true, &config, &clock, ctx(&mut scenario));
+            
+            // Create second game
+            let bet_coin2 = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
+            coin_flip::create_game(bet_coin2, false, &config, &clock, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            clock::destroy_for_testing(clock);
+        };
+
+        // Update randomness state
+        next_tx(&mut scenario, SYSTEM);
+        {
+            let mut rnd = test::take_shared<random::Random>(&scenario);
+            
+            random::update_randomness_state_for_testing(
+                &mut rnd, 
+                0, 
+                x"0000000000000000000000000000000000000000000000000000000000000000", 
+                ctx(&mut scenario)
+            );
+            
+            test::return_shared(rnd);
+        };
+
+        // Player 2 joins both games (exactly at the limit of 2)
+        next_tx(&mut scenario, PLAYER2);
+        {
+            let game1 = test::take_shared<Game>(&scenario);
+            let game2 = test::take_shared<Game>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            let rnd = test::take_shared<random::Random>(&scenario);
+            
+            // Create vector of 2 games (exactly at limit)
+            let mut games = vector::empty<Game>();
+            vector::push_back(&mut games, game1);
+            vector::push_back(&mut games, game2);
+            
+            // Create payment for both games
+            let payment = coin::mint_for_testing<SUI>(2 * TEST_BET_AMOUNT, ctx(&mut scenario));
+            
+            // Join both games (should succeed since we're at the limit)
+            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            
+            test::return_shared(config);
+            test::return_shared(rnd);
+        };
+
+        // Verify treasury collected fees (transaction succeeded)
+        next_tx(&mut scenario, ADMIN);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            let treasury_balance = coin_flip::get_treasury_balance(&config);
+            // Should have fees from both games
+            assert!(treasury_balance == 20_000_000, 0); // 2.5% of 800M total pot
+            test::return_shared(config);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::EInvalidAdminCap)]
+    fun test_non_admin_cannot_update_max_games() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        next_tx(&mut scenario, PLAYER1);
+        {
+            // Create a fake admin cap
+            let fake_admin_cap = coin_flip::create_admin_cap_for_testing(ctx(&mut scenario));
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            
+            // Try to update max games with fake admin cap (should fail)
+            coin_flip::update_max_games_per_transaction(&fake_admin_cap, &mut config, 50, ctx(&mut scenario));
+            
+            test::return_to_sender(&scenario, fake_admin_cap);
+            test::return_shared(config);
         };
 
         test::end(scenario);

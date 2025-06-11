@@ -14,10 +14,12 @@ module sui_coin_flip::coin_flip {
     const FEE_BASE: u64 = 10000;
     /// Default fee percentage (250 = 2.5%)
     const DEFAULT_FEE_PERCENTAGE: u64 = 250;
-    /// Minimum bet amount to prevent dust attacks (0.01 SUI)
-    const MIN_BET_AMOUNT: u64 = 10_000_000; // 0.01 SUI in MIST
+    /// Minimum bet amount to prevent dust attacks (0.2 SUI)
+    const MIN_BET_AMOUNT: u64 = 20_000_0000; // 0.2 SUI in MIST
     /// Maximum bet amount to prevent whale manipulation (1000 SUI)
     const MAX_BET_AMOUNT: u64 = 1_000_000_000_000; // 1000 SUI in MIST
+    /// Default maximum games per transaction (to prevent DoS attacks)
+    const DEFAULT_MAX_GAMES_PER_TX: u64 = 100;
 
     
     // ======== Errors ========
@@ -33,6 +35,8 @@ module sui_coin_flip::coin_flip {
     const EBetTooLarge: u64 = 9;
     const EContractPaused: u64 = 10;
     const EEmptyTreasury: u64 = 11;
+    const ETooManyGames: u64 = 12;
+    const EInvalidMaxGames: u64 = 13;
 
 
     // ======== Witness Pattern ========
@@ -74,6 +78,7 @@ module sui_coin_flip::coin_flip {
         is_paused: bool, // Emergency pause state
         min_bet_amount: u64, // Configurable minimum bet
         max_bet_amount: u64, // Configurable maximum bet
+        max_games_per_transaction: u64, // Maximum games per bulk transaction
     }
 
     // ======== Events ========
@@ -110,6 +115,7 @@ module sui_coin_flip::coin_flip {
         min_bet_amount: u64,
         max_bet_amount: u64,
         treasury_balance: u64,
+        max_games_per_transaction: u64,
     }
 
     // ======== Functions ========
@@ -133,6 +139,7 @@ module sui_coin_flip::coin_flip {
             is_paused: false,
             min_bet_amount: MIN_BET_AMOUNT,
             max_bet_amount: MAX_BET_AMOUNT,
+            max_games_per_transaction: DEFAULT_MAX_GAMES_PER_TX,
         };
 
         transfer::transfer(admin_cap, tx_context::sender(ctx));
@@ -219,6 +226,7 @@ module sui_coin_flip::coin_flip {
         // Security checks
         assert!(!config.is_paused, EContractPaused);
         assert!(games_count > 0, EGameNotFound);
+        assert!(games_count <= config.max_games_per_transaction, ETooManyGames);
 
         // Calculate total required bet amount and validate all games
         let mut total_required = 0u64;
@@ -382,6 +390,7 @@ module sui_coin_flip::coin_flip {
             min_bet_amount: config.min_bet_amount,
             max_bet_amount: config.max_bet_amount,
             treasury_balance: balance::value(&config.treasury_balance),
+            max_games_per_transaction: config.max_games_per_transaction,
         });
     }
 
@@ -407,6 +416,7 @@ module sui_coin_flip::coin_flip {
             min_bet_amount: config.min_bet_amount,
             max_bet_amount: config.max_bet_amount,
             treasury_balance: balance::value(&config.treasury_balance),
+            max_games_per_transaction: config.max_games_per_transaction,
         });
     }
 
@@ -429,6 +439,31 @@ module sui_coin_flip::coin_flip {
             min_bet_amount: config.min_bet_amount,
             max_bet_amount: config.max_bet_amount,
             treasury_balance: balance::value(&config.treasury_balance),
+            max_games_per_transaction: config.max_games_per_transaction,
+        });
+    }
+
+    /// Update max games per transaction (admin only)
+    public entry fun update_max_games_per_transaction(
+        admin_cap: &AdminCap,
+        config: &mut GameConfig,
+        new_max_games: u64,
+        ctx: &mut TxContext
+    ) {
+        validate_admin_cap(admin_cap, config);
+        assert!(new_max_games > 0, EInvalidMaxGames);
+        assert!(new_max_games <= 1000, EInvalidMaxGames); // Reasonable upper limit
+        
+        config.max_games_per_transaction = new_max_games;
+        
+        event::emit(ConfigUpdated {
+            admin: tx_context::sender(ctx),
+            fee_percentage: config.fee_percentage,
+            is_paused: config.is_paused,
+            min_bet_amount: config.min_bet_amount,
+            max_bet_amount: config.max_bet_amount,
+            treasury_balance: balance::value(&config.treasury_balance),
+            max_games_per_transaction: config.max_games_per_transaction,
         });
     }
 
@@ -447,6 +482,7 @@ module sui_coin_flip::coin_flip {
         let withdrawn_coin = coin::from_balance(withdrawn_balance, ctx);
         transfer::public_transfer(withdrawn_coin, tx_context::sender(ctx));
     }
+
 
 
     // ======== View Functions ========
@@ -487,6 +523,11 @@ module sui_coin_flip::coin_flip {
         (config.min_bet_amount, config.max_bet_amount)
     }
 
+    /// Get max games per transaction limit
+    public fun get_max_games_per_transaction(config: &GameConfig): u64 {
+        config.max_games_per_transaction
+    }
+
     // ======== Test Functions ========
     
     #[test_only]
@@ -506,4 +547,6 @@ module sui_coin_flip::coin_flip {
     public fun set_game_inactive_for_testing(game: &mut Game) {
         game.is_active = false;
     }
+
+
 } 

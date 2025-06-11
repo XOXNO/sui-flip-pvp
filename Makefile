@@ -37,9 +37,16 @@ help:
 	@echo "Admin Commands:"
 	@echo "  set-fee         - Set game fee percentage (FEE_BPS=250)"
 	@echo "  update-limits   - Update bet limits (MIN_BET=10000000 MAX_BET=1000000000000)"
+	@echo "  update-max-games - Update max games per transaction (MAX_GAMES=100)"
 	@echo "  pause           - Pause contract operations"
 	@echo "  unpause         - Resume contract operations"
 	@echo "  withdraw-fees   - Withdraw accumulated fees"
+	@echo ""
+	@echo "Migration Commands (after upgrades):"
+	@echo "  migrate-treasury    - Withdraw treasury from old contract to admin wallet"
+	@echo "  migrate-config      - Migrate configuration settings (fee, limits, pause)"
+	@echo "  migrate-all         - Migrate everything (treasury + config)"
+	@echo "  check-old-configs   - Check status of old configurations"
 	@echo ""
 	@echo "Development & Utility Commands:"
 	@echo "  dev-setup       - Complete development setup (build + deploy)"
@@ -93,6 +100,15 @@ update-limits:
 	@echo "$(GREEN)Updating bet limits to $(MIN_BET)-$(MAX_BET) MIST...$(NC)"
 	@./scripts/admin/update_limits.sh $(NETWORK) $(MIN_BET) $(MAX_BET) $(RPC_URL) $(GAS_BUDGET)
 
+# Admin function: Update max games per transaction
+update-max-games:
+	@if [ -z "$(MAX_GAMES)" ]; then \
+		echo "$(RED)Error: MAX_GAMES not set. Usage: make update-max-games MAX_GAMES=100$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Updating max games per transaction to $(MAX_GAMES)...$(NC)"
+	@./scripts/admin/update_max_games.sh $(NETWORK) $(MAX_GAMES) $(RPC_URL) $(GAS_BUDGET)
+
 # Admin function: Pause contract
 pause:
 	@echo "$(GREEN)Pausing contract...$(NC)"
@@ -107,6 +123,26 @@ unpause:
 withdraw-fees:
 	@echo "$(GREEN)Withdrawing accumulated fees...$(NC)"
 	@./scripts/admin/withdraw_fees.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
+
+# Migration function: Migrate treasury from old to new contract
+migrate-treasury:
+	@echo "$(GREEN)Migrating treasury from old to new contract...$(NC)"
+	@./scripts/migrate/migrate_treasury.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
+
+# Migration function: Migrate configuration settings
+migrate-config:
+	@echo "$(GREEN)Migrating configuration settings...$(NC)"
+	@./scripts/migrate/migrate_config.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
+
+# Migration function: Migrate everything (treasury + config)
+migrate-all:
+	@echo "$(GREEN)Migrating everything from old to new contract...$(NC)"
+	@./scripts/migrate/migrate_all.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
+
+# Check status of old configurations
+check-old-configs:
+	@echo "$(GREEN)Checking status of old configurations...$(NC)"
+	@./scripts/migrate/check_old_configs.sh $(NETWORK) $(RPC_URL)
 
 # Clean build artifacts
 clean:
@@ -143,4 +179,18 @@ examples:
 	@echo "  make pause NETWORK=testnet"
 	@echo ""
 	@echo "Withdraw fees:"
-	@echo "  make withdraw-fees NETWORK=testnet" 
+	@echo "  make withdraw-fees NETWORK=testnet"
+	@echo ""
+	@echo "$(YELLOW)Migration Examples (after upgrades):$(NC)"
+	@echo ""
+	@echo "Check what needs migration:"
+	@echo "  make check-old-configs NETWORK=testnet"
+	@echo ""
+	@echo "Migrate treasury funds only:"
+	@echo "  make migrate-treasury NETWORK=testnet"
+	@echo ""
+	@echo "Migrate configuration settings only:"
+	@echo "  make migrate-config NETWORK=testnet"
+	@echo ""
+	@echo "Migrate everything at once:"
+	@echo "  make migrate-all NETWORK=testnet" 
