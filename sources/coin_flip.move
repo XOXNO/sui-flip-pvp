@@ -92,9 +92,12 @@ module sui_coin_flip::coin_flip {
 
     public struct GameJoined has copy, drop {
         game_id: address,
+        creator: address,
+        creator_choice_heads: bool,
         joiner: address,
         joiner_choice_heads: bool,
         winner: address,
+        bet_amount: u64,
         loser: address,
         total_pot: u64,
         winner_payout: u64,
@@ -328,6 +331,9 @@ module sui_coin_flip::coin_flip {
             total_pot,
             winner_payout,
             fee_collected: fee_amount,
+            bet_amount: bet_amount,
+            creator_choice_heads: creator_choice.is_heads,
+            creator,
             coin_flip_result_heads: random_value,
         });
 
