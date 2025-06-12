@@ -7,6 +7,8 @@ module sui_coin_flip::coin_flip {
     use sui::event;
     use sui::random::{Self, Random};
     use sui::clock::{Self, Clock};
+    use std::type_name::{Self, TypeName};
+    use sui::table::{Self, Table};
     
     // ======== Constants ========
     
@@ -34,10 +36,11 @@ module sui_coin_flip::coin_flip {
     const EBetTooSmall: u64 = 8;
     const EBetTooLarge: u64 = 9;
     const EContractPaused: u64 = 10;
-    const EEmptyTreasury: u64 = 11;
-    const ETooManyGames: u64 = 12;
-    const EInvalidMaxGames: u64 = 13;
-
+    const ETooManyGames: u64 = 11;
+    const EInvalidMaxGames: u64 = 12;
+    const EInvalidAddress: u64 = 13;
+    const ETokenNotWhitelisted: u64 = 14;
+    const ETokenMismatch: u64 = 15;
 
     // ======== Witness Pattern ========
 
@@ -53,15 +56,17 @@ module sui_coin_flip::coin_flip {
 
     /// Game state object
     /// bet_amount: The exact amount required to join this game (for UI display and validation)
-    /// balance: The actual SUI tokens held by the game (may temporarily exceed bet_amount during join)
-    public struct Game has key, store {
+    /// balance: The actual tokens held by the game (may temporarily exceed bet_amount during join)
+    /// token_type: The type of token used for this game
+    public struct Game<phantom T> has key, store {
         id: UID,
         creator: address,
         bet_amount: u64, // Required bet amount to join
         creator_choice: CoinSide,
-        balance: Balance<SUI>, // Actual SUI tokens in the game
+        balance: Balance<T>, // Actual tokens in the game
         is_active: bool,
         created_at_ms: u64, // Timestamp when game was created
+        token_type: std::type_name::TypeName, // Store the token type for validation
     }
 
     /// Admin capability with unique ID for validation
@@ -69,16 +74,17 @@ module sui_coin_flip::coin_flip {
         id: UID,
     }
 
-    /// Global configuration and treasury
+    /// Global configuration with treasury address
     public struct GameConfig has key {
         id: UID,
         admin_cap_id: address, // ID of the valid admin cap
         fee_percentage: u64, // Configurable fee percentage
-        treasury_balance: Balance<SUI>,
+        treasury_address: address, // Address to receive fees directly
         is_paused: bool, // Emergency pause state
         min_bet_amount: u64, // Configurable minimum bet
         max_bet_amount: u64, // Configurable maximum bet
         max_games_per_transaction: u64, // Maximum games per bulk transaction
+        whitelisted_tokens: Table<TypeName, bool>, // Whitelisted token types
     }
 
     // ======== Events ========
@@ -88,6 +94,7 @@ module sui_coin_flip::coin_flip {
         creator: address,
         bet_amount: u64,
         creator_choice_heads: bool,
+        token_type: TypeName, // Token type used for the game
     }
 
     public struct GameJoined has copy, drop {
@@ -103,12 +110,14 @@ module sui_coin_flip::coin_flip {
         winner_payout: u64,
         fee_collected: u64,
         coin_flip_result_heads: bool,
+        token_type: TypeName, // Token type used for the game
     }
 
     public struct GameCancelled has copy, drop {
         game_id: address,
         creator: address,
         refund_amount: u64,
+        token_type: TypeName, // Token type used for the game
     }
 
     public struct ConfigUpdated has copy, drop {
@@ -117,7 +126,7 @@ module sui_coin_flip::coin_flip {
         is_paused: bool,
         min_bet_amount: u64,
         max_bet_amount: u64,
-        treasury_balance: u64,
+        treasury_address: address,
         max_games_per_transaction: u64,
     }
 
@@ -133,19 +142,25 @@ module sui_coin_flip::coin_flip {
         };
         
         let admin_cap_id = object::uid_to_address(&admin_cap.id);
+        let deployer_address = tx_context::sender(ctx);
+        
+        // Initialize whitelist with SUI token by default
+        let mut whitelisted_tokens = table::new<TypeName, bool>(ctx);
+        table::add(&mut whitelisted_tokens, type_name::get<SUI>(), true);
         
         let config = GameConfig {
             id: object::new(ctx),
             admin_cap_id,
             fee_percentage: DEFAULT_FEE_PERCENTAGE,
-            treasury_balance: balance::zero(),
+            treasury_address: deployer_address, // Set deployer as initial treasury
             is_paused: false,
             min_bet_amount: MIN_BET_AMOUNT,
             max_bet_amount: MAX_BET_AMOUNT,
             max_games_per_transaction: DEFAULT_MAX_GAMES_PER_TX,
+            whitelisted_tokens,
         };
 
-        transfer::transfer(admin_cap, tx_context::sender(ctx));
+        transfer::transfer(admin_cap, deployer_address);
         transfer::share_object(config);
     }
 
@@ -170,8 +185,8 @@ module sui_coin_flip::coin_flip {
     }
 
     /// Create a new coin flip game
-    public entry fun create_game(
-        bet_coin: Coin<SUI>,
+    public entry fun create_game<T>(
+        bet_coin: Coin<T>,
         choice: bool, // true for heads, false for tails
         config: &GameConfig,
         clock: &Clock,
@@ -179,6 +194,10 @@ module sui_coin_flip::coin_flip {
     ) {
         // Check if contract is paused
         assert!(!config.is_paused, EContractPaused);
+        
+        // Check if token is whitelisted
+        let token_type = type_name::get<T>();
+        assert!(table::contains(&config.whitelisted_tokens, token_type), ETokenNotWhitelisted);
         
         let bet_amount = coin::value(&bet_coin);
         assert!(bet_amount > 0, EInvalidBetAmount);
@@ -188,7 +207,7 @@ module sui_coin_flip::coin_flip {
         let creator = tx_context::sender(ctx);
         let creator_choice = CoinSide { is_heads: choice };
         
-        let game = Game {
+        let game = Game<T> {
             id: object::new(ctx),
             creator,
             bet_amount,
@@ -196,6 +215,7 @@ module sui_coin_flip::coin_flip {
             balance: coin::into_balance(bet_coin),
             is_active: true,
             created_at_ms: clock::timestamp_ms(clock),
+            token_type,
         };
 
         let game_id = object::uid_to_address(&game.id);
@@ -206,6 +226,7 @@ module sui_coin_flip::coin_flip {
             creator,
             bet_amount,
             creator_choice_heads: choice,
+            token_type,
         });
 
         transfer::share_object(game);
@@ -213,40 +234,48 @@ module sui_coin_flip::coin_flip {
 
     /// SECURE: Join multiple games with equal resource consumption
     /// Private entry function prevents composition attacks while maintaining single-tx UX
-    entry fun join_games(
-        games_raw: vector<Game>,
-        payment: Coin<SUI>,
-        config: &mut GameConfig,
+    entry fun join_games<T>(
+        games_raw: vector<Game<T>>,
+        payment: Coin<T>,
+        config: &GameConfig,
         rnd: &Random,
         ctx: &mut TxContext
     ) {
-        let mut payment_coin = payment;
-        let mut games = games_raw;
         let joiner = tx_context::sender(ctx);
-        let payment_amount = coin::value(&payment_coin);
-        let games_count = vector::length(&games);
+        let games_count = vector::length(&games_raw);
+        let payment_amount = coin::value(&payment);
         
         // Security checks
         assert!(!config.is_paused, EContractPaused);
         assert!(games_count > 0, EGameNotFound);
         assert!(games_count <= config.max_games_per_transaction, ETooManyGames);
 
+        // Check if token is whitelisted
+        let token_type = type_name::get<T>();
+        assert!(table::contains(&config.whitelisted_tokens, token_type), ETokenNotWhitelisted);
+
         // Calculate total required bet amount and validate all games
-        let mut total_required = 0u64;
-        let mut i = 0;
+        let mut required_total: u64 = 0;
+        let mut i: u64 = 0;
         while (i < games_count) {
-            let game = vector::borrow(&games, i);
+            let game = vector::borrow(&games_raw, i);
             assert!(game.is_active, EGameNotFound);
             assert!(joiner != game.creator, ECannotJoinOwnGame);
-            total_required = total_required + game.bet_amount;
+            // Verify all games use the same token type as payment
+            assert!(game.token_type == token_type, ETokenMismatch);
+            required_total = required_total + game.bet_amount;
             i = i + 1;
         };
 
         // Ensure payment covers all games
-        assert!(payment_amount >= total_required, EInsufficientPayment);
+        assert!(payment_amount >= required_total, EInsufficientPayment);
 
         // Create a single random generator for all games (secure)
         let mut generator = random::new_generator(rnd, ctx);
+
+        // Convert to mutable for processing
+        let mut games = games_raw;
+        let mut payment_coin = payment;
 
         // Process each game ensuring EQUAL resource consumption
         while (!vector::is_empty(&games)) {
@@ -260,8 +289,8 @@ module sui_coin_flip::coin_flip {
         vector::destroy_empty(games);
 
         // Refund any excess payment
-        let remaining_payment = coin::value(&payment_coin);
-        if (remaining_payment > 0) {
+        let remaining_payment_amount = coin::value(&payment_coin);
+        if (remaining_payment_amount > 0) {
             transfer::public_transfer(payment_coin, joiner);
         } else {
             coin::destroy_zero(payment_coin);
@@ -269,12 +298,12 @@ module sui_coin_flip::coin_flip {
     }
 
     /// Execute single game with GUARANTEED equal resource consumption
-    fun execute_secure_game(
-        game: Game,
-        payment_coin: &mut Coin<SUI>,
+    fun execute_secure_game<T>(
+        game: Game<T>,
+        payment_coin: &mut Coin<T>,
         joiner: address,
         generator: &mut random::RandomGenerator,
-        config: &mut GameConfig,
+        config: &GameConfig,
         ctx: &mut TxContext
     ) {
         // Extract game data
@@ -286,14 +315,15 @@ module sui_coin_flip::coin_flip {
             balance,
             is_active: _,
             created_at_ms: _,
+            token_type,
         } = game;
 
         // Extract exact bet amount from payment
         let bet_coin = coin::split(payment_coin, bet_amount, ctx);
         
         // Add joiner's bet to game balance
-        let mut balance = balance;
-        balance::join(&mut balance, coin::into_balance(bet_coin));
+        let mut game_balance = balance;
+        balance::join(&mut game_balance, coin::into_balance(bet_coin));
 
         // Generate randomness (same operation for all outcomes)
         let random_value = random::generate_bool(generator);
@@ -305,20 +335,19 @@ module sui_coin_flip::coin_flip {
         } else {
             (joiner, creator)
         };
-
-        // CRITICAL: All following operations are IDENTICAL regardless of outcome
         
         // Calculate amounts (same computation)
-        let total_pot = balance::value(&balance);
+        let total_pot = balance::value(&game_balance);
         let fee_amount = (total_pot * config.fee_percentage) / FEE_BASE;
         let winner_payout = total_pot - fee_amount;
 
-        // Extract fee (same operation)
-        let fee_balance = balance::split(&mut balance, fee_amount);
-        balance::join(&mut config.treasury_balance, fee_balance);
+        // Extract fee and send directly to treasury address
+        let fee_balance = balance::split(&mut game_balance, fee_amount);
+        let fee_coin = coin::from_balance(fee_balance, ctx);
+        transfer::public_transfer(fee_coin, config.treasury_address);
         
         // Transfer to winner (same transfer operation, just different address)
-        let winner_coin = coin::from_balance(balance, ctx);
+        let winner_coin = coin::from_balance(game_balance, ctx);
         transfer::public_transfer(winner_coin, winner);
 
         // Emit standardized event (same structure size)
@@ -335,18 +364,16 @@ module sui_coin_flip::coin_flip {
             creator_choice_heads: creator_choice.is_heads,
             creator,
             coin_flip_result_heads: random_value,
+            token_type,
         });
-
-        // Gas equalization: Ensure both paths consume identical resources
-        let _gas_equalizer = object::uid_to_address(&id);
         
         // Delete object (same operation)
         object::delete(id);
     }
 
     /// Cancel a pending game and get refund (with timeout check)
-    public entry fun cancel_game(
-        game: Game,
+    public entry fun cancel_game<T>(
+        game: Game<T>,
         ctx: &mut TxContext
     ) {
         let caller = tx_context::sender(ctx);
@@ -363,6 +390,7 @@ module sui_coin_flip::coin_flip {
             balance,
             is_active: _,
             created_at_ms: _,
+            token_type,
         } = game;
 
         // Refund the creator
@@ -374,9 +402,33 @@ module sui_coin_flip::coin_flip {
             game_id: object::uid_to_address(&id),
             creator,
             refund_amount: bet_amount,
+            token_type,
         });
 
         object::delete(id);
+    }
+
+    /// Update treasury address (admin only)
+    public entry fun update_treasury_address(
+        admin_cap: &AdminCap,
+        config: &mut GameConfig,
+        new_treasury_address: address,
+        ctx: &mut TxContext
+    ) {
+        validate_admin_cap(admin_cap, config);
+        assert!(new_treasury_address != @0x0, EInvalidAddress);
+        
+        config.treasury_address = new_treasury_address;
+        
+        event::emit(ConfigUpdated {
+            admin: tx_context::sender(ctx),
+            fee_percentage: config.fee_percentage,
+            is_paused: config.is_paused,
+            min_bet_amount: config.min_bet_amount,
+            max_bet_amount: config.max_bet_amount,
+            treasury_address: config.treasury_address,
+            max_games_per_transaction: config.max_games_per_transaction,
+        });
     }
 
     /// Emergency pause/unpause the contract (admin only)
@@ -395,7 +447,7 @@ module sui_coin_flip::coin_flip {
             is_paused: config.is_paused,
             min_bet_amount: config.min_bet_amount,
             max_bet_amount: config.max_bet_amount,
-            treasury_balance: balance::value(&config.treasury_balance),
+            treasury_address: config.treasury_address,
             max_games_per_transaction: config.max_games_per_transaction,
         });
     }
@@ -421,7 +473,7 @@ module sui_coin_flip::coin_flip {
             is_paused: config.is_paused,
             min_bet_amount: config.min_bet_amount,
             max_bet_amount: config.max_bet_amount,
-            treasury_balance: balance::value(&config.treasury_balance),
+            treasury_address: config.treasury_address,
             max_games_per_transaction: config.max_games_per_transaction,
         });
     }
@@ -444,7 +496,7 @@ module sui_coin_flip::coin_flip {
             is_paused: config.is_paused,
             min_bet_amount: config.min_bet_amount,
             max_bet_amount: config.max_bet_amount,
-            treasury_balance: balance::value(&config.treasury_balance),
+            treasury_address: config.treasury_address,
             max_games_per_transaction: config.max_games_per_transaction,
         });
     }
@@ -468,33 +520,37 @@ module sui_coin_flip::coin_flip {
             is_paused: config.is_paused,
             min_bet_amount: config.min_bet_amount,
             max_bet_amount: config.max_bet_amount,
-            treasury_balance: balance::value(&config.treasury_balance),
+            treasury_address: config.treasury_address,
             max_games_per_transaction: config.max_games_per_transaction,
         });
     }
 
-    /// Withdraw all fees from treasury (admin only - claims everything)
-    public entry fun withdraw_fees(
+    /// Add a token to the whitelist (admin only)
+    public entry fun add_whitelisted_token<T>(
         admin_cap: &AdminCap,
         config: &mut GameConfig,
-        ctx: &mut TxContext
+        _ctx: &mut TxContext
     ) {
         validate_admin_cap(admin_cap, config);
-        
-        let treasury_amount = balance::value(&config.treasury_balance);
-        assert!(treasury_amount > 0, EEmptyTreasury);
-        
-        let withdrawn_balance = balance::withdraw_all(&mut config.treasury_balance);
-        let withdrawn_coin = coin::from_balance(withdrawn_balance, ctx);
-        transfer::public_transfer(withdrawn_coin, tx_context::sender(ctx));
+        let token_type = type_name::get<T>();
+        table::add(&mut config.whitelisted_tokens, token_type, true);
     }
 
-
+    /// Remove a token from the whitelist (admin only)
+    public entry fun remove_whitelisted_token<T>(
+        admin_cap: &AdminCap,
+        config: &mut GameConfig,
+        _ctx: &mut TxContext
+    ) {
+        validate_admin_cap(admin_cap, config);
+        let token_type = type_name::get<T>();
+        table::remove(&mut config.whitelisted_tokens, token_type);
+    }
 
     // ======== View Functions ========
 
     /// Get game details (including creation timestamp)
-    public fun get_game_info(game: &Game): (address, u64, bool, bool, u64) {
+    public fun get_game_info<T>(game: &Game<T>): (address, u64, bool, bool, u64) {
         (
             game.creator,
             game.bet_amount,
@@ -504,9 +560,20 @@ module sui_coin_flip::coin_flip {
         )
     }
 
-    /// Get treasury balance
-    public fun get_treasury_balance(config: &GameConfig): u64 {
-        balance::value(&config.treasury_balance)
+    /// Check if a token is whitelisted
+    public fun is_token_whitelisted<T>(config: &GameConfig): bool {
+        let token_type = type_name::get<T>();
+        table::contains(&config.whitelisted_tokens, token_type)
+    }
+
+    /// Get whitelisted tokens
+    public fun get_whitelisted_tokens(config: &GameConfig): &Table<TypeName, bool> {
+        &config.whitelisted_tokens
+    }
+
+    /// Get treasury address
+    public fun get_treasury_address(config: &GameConfig): address {
+        config.treasury_address
     }
 
     /// Get current fee percentage
@@ -550,9 +617,7 @@ module sui_coin_flip::coin_flip {
     }
 
     #[test_only]
-    public fun set_game_inactive_for_testing(game: &mut Game) {
+    public fun set_game_inactive_for_testing<T>(game: &mut Game<T>) {
         game.is_active = false;
     }
-
-
 } 

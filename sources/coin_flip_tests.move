@@ -63,7 +63,7 @@ module sui_coin_flip::coin_flip_tests {
         next_tx(&mut scenario, PLAYER1);
         {
             // Game should be created and shared
-            assert!(test::has_most_recent_shared<Game>(), 0);
+            assert!(test::has_most_recent_shared<Game<SUI>>(), 0);
         };
 
         test::end(scenario);
@@ -93,10 +93,8 @@ module sui_coin_flip::coin_flip_tests {
         // Player 1 cancels the game
         next_tx(&mut scenario, PLAYER1);
         {
-            let game = test::take_shared<Game>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
+            let game = test::take_shared<Game<SUI>>(&scenario);
             coin_flip::cancel_game(game, ctx(&mut scenario));
-            clock::destroy_for_testing(clock);
         };
 
         // Player 1 should receive refund
@@ -136,10 +134,8 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 tries to cancel Player 1's game (should fail)
         next_tx(&mut scenario, PLAYER2);
         {
-            let game = test::take_shared<Game>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
+            let game = test::take_shared<Game<SUI>>(&scenario);
             coin_flip::cancel_game(game, ctx(&mut scenario));
-            clock::destroy_for_testing(clock);
         };
 
         test::end(scenario);
@@ -199,7 +195,7 @@ module sui_coin_flip::coin_flip_tests {
     }
 
     #[test]
-    fun test_withdraw_fees_empty_treasury() {
+    fun test_treasury_address_functions() {
         let mut scenario = test::begin(ADMIN);
         
         // Initialize contract
@@ -207,14 +203,40 @@ module sui_coin_flip::coin_flip_tests {
             coin_flip::init_for_testing(ctx(&mut scenario));
         };
 
-        // Admin tries to withdraw from empty treasury
+        // Check initial treasury address
+        next_tx(&mut scenario, ADMIN);
+        {
+            let config = test::take_shared<GameConfig>(&scenario);
+            
+            // Treasury address should be set to deployer (ADMIN)
+            let treasury_address = coin_flip::get_treasury_address(&config);
+            assert!(treasury_address == ADMIN, 0);
+            
+            test::return_shared(config);
+        };
+
+        test::end(scenario);
+    }
+
+    #[test]
+    fun test_update_treasury_address() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
         next_tx(&mut scenario, ADMIN);
         {
             let admin_cap = test::take_from_sender<AdminCap>(&scenario);
-            let config = test::take_shared<GameConfig>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
             
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
-            assert!(treasury_balance == 0, 0); // Should be empty initially
+            // Update treasury address
+            coin_flip::update_treasury_address(&admin_cap, &mut config, PLAYER1, ctx(&mut scenario));
+            
+            // Check updated treasury address
+            assert!(coin_flip::get_treasury_address(&config) == PLAYER1, 0);
             
             test::return_to_sender(&scenario, admin_cap);
             test::return_shared(config);
@@ -246,7 +268,7 @@ module sui_coin_flip::coin_flip_tests {
 
         next_tx(&mut scenario, PLAYER1);
         {
-            let game = test::take_shared<Game>(&scenario);
+            let game = test::take_shared<Game<SUI>>(&scenario);
             let (creator, bet_amount, creator_choice_heads, is_active, _created_at) = coin_flip::get_game_info(&game);
             
             assert!(creator == PLAYER1, 0);
@@ -271,18 +293,15 @@ module sui_coin_flip::coin_flip_tests {
 
         next_tx(&mut scenario, ADMIN);
         {
-            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
             let config = test::take_shared<GameConfig>(&scenario);
             
             // Test view functions
             let fee_percentage = coin_flip::get_fee_percentage(&config);
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
+            let treasury_address = coin_flip::get_treasury_address(&config);
             
             assert!(fee_percentage == 250, 0); // Default 2.5%
-            assert!(treasury_balance == 0, 1); // Initially empty
-            // Admin cap ID should be set (we can't access the private field directly)
+            assert!(treasury_address == ADMIN, 1); // Initially set to deployer
             
-            test::return_to_sender(&scenario, admin_cap);
             test::return_shared(config);
         };
 
@@ -363,7 +382,7 @@ module sui_coin_flip::coin_flip_tests {
         // Set the game as inactive using test helper
         next_tx(&mut scenario, ADMIN);
         {
-            let mut game = test::take_shared<Game>(&scenario);
+            let mut game = test::take_shared<Game<SUI>>(&scenario);
             coin_flip::set_game_inactive_for_testing(&mut game);
             test::return_shared(game);
         };
@@ -371,7 +390,7 @@ module sui_coin_flip::coin_flip_tests {
         // Verify the game is now inactive
         next_tx(&mut scenario, PLAYER2);
         {
-            let game = test::take_shared<Game>(&scenario);
+            let game = test::take_shared<Game<SUI>>(&scenario);
             let (_, _, _, is_active, _) = coin_flip::get_game_info(&game);
             
             // Verify game is inactive - in real usage, calling join_game 
@@ -435,13 +454,13 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 joins both games using bulk function
         next_tx(&mut scenario, PLAYER2);
         {
-            let game1 = test::take_shared<Game>(&scenario);
-            let game2 = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let game1 = test::take_shared<Game<SUI>>(&scenario);
+            let game2 = test::take_shared<Game<SUI>>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create vector of games
-            let mut games = vector::empty<Game>();
+            let mut games = vector::empty<Game<SUI>>();
             vector::push_back(&mut games, game1);
             vector::push_back(&mut games, game2);
             
@@ -449,20 +468,10 @@ module sui_coin_flip::coin_flip_tests {
             let total_payment = coin::mint_for_testing<SUI>(2 * TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Join both games in bulk
-            coin_flip::join_games(games, total_payment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(games, total_payment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
-        };
-
-        // Check that treasury collected fees from both games
-        next_tx(&mut scenario, ADMIN);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
-            // Should have 20M mist in fees (2.5% of 800M total pot)
-            assert!(treasury_balance == 20_000_000, 0);
-            test::return_shared(config);
         };
 
         // Check that someone received winnings from both games
@@ -485,6 +494,18 @@ module sui_coin_flip::coin_flip_tests {
                 // Each game payout should be 390M (400M total pot - 10M fee)
                 assert!(coin::value(&payout_coin) == 390_000_000, 2);
                 test::return_to_sender(&scenario, payout_coin);
+            };
+        };
+
+        // Check that treasury address received fees (fees are sent directly to treasury address)
+        next_tx(&mut scenario, ADMIN);
+        {
+            // Admin (treasury address) should receive fee coins directly
+            while (test::has_most_recent_for_sender<Coin<SUI>>(&scenario)) {
+                let fee_coin = test::take_from_sender<Coin<SUI>>(&scenario);
+                // Each game generates 10M fee (2.5% of 400M pot)
+                assert!(coin::value(&fee_coin) == 10_000_000, 3);
+                test::return_to_sender(&scenario, fee_coin);
             };
         };
 
@@ -528,13 +549,13 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 tries to join both games with insufficient payment (should fail)
         next_tx(&mut scenario, PLAYER2);
         {
-            let game1 = test::take_shared<Game>(&scenario);
-            let game2 = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let game1 = test::take_shared<Game<SUI>>(&scenario);
+            let game2 = test::take_shared<Game<SUI>>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create vector of games
-            let mut games = vector::empty<Game>();
+            let mut games = vector::empty<Game<SUI>>();
             vector::push_back(&mut games, game1);
             vector::push_back(&mut games, game2);
             
@@ -542,7 +563,7 @@ module sui_coin_flip::coin_flip_tests {
             let insufficient_payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Try to join both games with insufficient payment (should fail)
-            coin_flip::join_games(games, insufficient_payment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(games, insufficient_payment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
@@ -570,17 +591,17 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 tries to join empty games vector (should fail)
         next_tx(&mut scenario, PLAYER2);
         {
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create empty vector of games
-            let empty_games = vector::empty<Game>();
+            let empty_games = vector::empty<Game<SUI>>();
             
             // Create payment
             let payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Try to join empty games vector (should fail)
-            coin_flip::join_games(empty_games, payment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(empty_games, payment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
@@ -626,13 +647,13 @@ module sui_coin_flip::coin_flip_tests {
         // Player 1 tries to join their own games (should fail)
         next_tx(&mut scenario, PLAYER1);
         {
-            let game1 = test::take_shared<Game>(&scenario);
-            let game2 = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let game1 = test::take_shared<Game<SUI>>(&scenario);
+            let game2 = test::take_shared<Game<SUI>>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create vector of games
-            let mut games = vector::empty<Game>();
+            let mut games = vector::empty<Game<SUI>>();
             vector::push_back(&mut games, game1);
             vector::push_back(&mut games, game2);
             
@@ -640,7 +661,7 @@ module sui_coin_flip::coin_flip_tests {
             let payment = coin::mint_for_testing<SUI>(2 * TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Try to join own games (should fail)
-            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(games, payment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
@@ -692,19 +713,19 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 tries to join games while contract is paused (should fail)
         next_tx(&mut scenario, PLAYER2);
         {
-            let game = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let game = test::take_shared<Game<SUI>>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create vector of games
-            let mut games = vector::empty<Game>();
+            let mut games = vector::empty<Game<SUI>>();
             vector::push_back(&mut games, game);
             
             // Create payment
             let payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Try to join games while paused (should fail)
-            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(games, payment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
@@ -764,13 +785,13 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 joins both games with overpayment
         next_tx(&mut scenario, PLAYER2);
         {
-            let game1 = test::take_shared<Game>(&scenario);
-            let game2 = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let game1 = test::take_shared<Game<SUI>>(&scenario);
+            let game2 = test::take_shared<Game<SUI>>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create vector of games
-            let mut games = vector::empty<Game>();
+            let mut games = vector::empty<Game<SUI>>();
             vector::push_back(&mut games, game1);
             vector::push_back(&mut games, game2);
             
@@ -778,7 +799,7 @@ module sui_coin_flip::coin_flip_tests {
             let overpayment = coin::mint_for_testing<SUI>(3 * TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Join both games with overpayment
-            coin_flip::join_games(games, overpayment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(games, overpayment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
@@ -805,16 +826,6 @@ module sui_coin_flip::coin_flip_tests {
             };
             
             assert!(refund_received, 0); // Ensure we got the refund
-        };
-
-        // Check that treasury collected fees from both games
-        next_tx(&mut scenario, ADMIN);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
-            // Should have 20M mist in fees (2.5% of 800M total pot)
-            assert!(treasury_balance == 20_000_000, 2);
-            test::return_shared(config);
         };
 
         test::end(scenario);
@@ -851,7 +862,7 @@ module sui_coin_flip::coin_flip_tests {
         // Set the game as inactive using test helper
         next_tx(&mut scenario, ADMIN);
         {
-            let mut game = test::take_shared<Game>(&scenario);
+            let mut game = test::take_shared<Game<SUI>>(&scenario);
             coin_flip::set_game_inactive_for_testing(&mut game);
             test::return_shared(game);
         };
@@ -859,19 +870,19 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 tries to join inactive game (should fail)
         next_tx(&mut scenario, PLAYER2);
         {
-            let game = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let game = test::take_shared<Game<SUI>>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create vector with inactive game
-            let mut games = vector::empty<Game>();
+            let mut games = vector::empty<Game<SUI>>();
             vector::push_back(&mut games, game);
             
             // Create payment
             let payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Try to join inactive game (should fail)
-            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(games, payment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
@@ -1040,13 +1051,13 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 tries to join both games when limit is 1 (should fail)
         next_tx(&mut scenario, PLAYER2);
         {
-            let game1 = test::take_shared<Game>(&scenario);
-            let game2 = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let game1 = test::take_shared<Game<SUI>>(&scenario);
+            let game2 = test::take_shared<Game<SUI>>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create vector of 2 games (exceeds limit of 1)
-            let mut games = vector::empty<Game>();
+            let mut games = vector::empty<Game<SUI>>();
             vector::push_back(&mut games, game1);
             vector::push_back(&mut games, game2);
             
@@ -1054,7 +1065,7 @@ module sui_coin_flip::coin_flip_tests {
             let payment = coin::mint_for_testing<SUI>(2 * TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Try to join 2 games when limit is 1 (should fail with ETooManyGames)
-            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(games, payment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
@@ -1126,13 +1137,13 @@ module sui_coin_flip::coin_flip_tests {
         // Player 2 joins both games (exactly at the limit of 2)
         next_tx(&mut scenario, PLAYER2);
         {
-            let game1 = test::take_shared<Game>(&scenario);
-            let game2 = test::take_shared<Game>(&scenario);
-            let mut config = test::take_shared<GameConfig>(&scenario);
+            let game1 = test::take_shared<Game<SUI>>(&scenario);
+            let game2 = test::take_shared<Game<SUI>>(&scenario);
+            let config = test::take_shared<GameConfig>(&scenario);
             let rnd = test::take_shared<random::Random>(&scenario);
             
             // Create vector of 2 games (exactly at limit)
-            let mut games = vector::empty<Game>();
+            let mut games = vector::empty<Game<SUI>>();
             vector::push_back(&mut games, game1);
             vector::push_back(&mut games, game2);
             
@@ -1140,20 +1151,10 @@ module sui_coin_flip::coin_flip_tests {
             let payment = coin::mint_for_testing<SUI>(2 * TEST_BET_AMOUNT, ctx(&mut scenario));
             
             // Join both games (should succeed since we're at the limit)
-            coin_flip::join_games(games, payment, &mut config, &rnd, ctx(&mut scenario));
+            coin_flip::join_games(games, payment, &config, &rnd, ctx(&mut scenario));
             
             test::return_shared(config);
             test::return_shared(rnd);
-        };
-
-        // Verify treasury collected fees (transaction succeeded)
-        next_tx(&mut scenario, ADMIN);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let treasury_balance = coin_flip::get_treasury_balance(&config);
-            // Should have fees from both games
-            assert!(treasury_balance == 20_000_000, 0); // 2.5% of 800M total pot
-            test::return_shared(config);
         };
 
         test::end(scenario);

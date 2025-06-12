@@ -13,7 +13,6 @@ module sui_coin_flip::coin_flip_extended_tests {
         EContractPaused,
         EBetTooSmall,
         EBetTooLarge,
-        EEmptyTreasury,
         EInvalidBetAmount
     };
 
@@ -47,8 +46,6 @@ module sui_coin_flip::coin_flip_extended_tests {
         
         (scenario, admin_cap, config, clock)
     }
-
-
 
     #[test]
     fun test_update_bet_limits_success() {
@@ -148,8 +145,6 @@ module sui_coin_flip::coin_flip_extended_tests {
         test::end(scenario);
     }
 
-
-
     #[test]
     #[expected_failure(abort_code = EBetTooSmall)]
     fun test_create_game_bet_too_small() {
@@ -157,7 +152,7 @@ module sui_coin_flip::coin_flip_extended_tests {
         
         // Try to create a game with bet smaller than minimum
         test::next_tx(&mut scenario, PLAYER1);
-        let bet_coin = mint_sui(1_000_000, test::ctx(&mut scenario)); // 0.001 SUI, less than 0.01 SUI minimum
+        let bet_coin = mint_sui(1_000_000, test::ctx(&mut scenario)); // 0.001 SUI, less than 0.2 SUI minimum
         coin_flip::create_game(bet_coin, true, &config, &clock, test::ctx(&mut scenario));
         
         // Cleanup
@@ -207,13 +202,20 @@ module sui_coin_flip::coin_flip_extended_tests {
     }
 
     #[test]
-    #[expected_failure(abort_code = EEmptyTreasury)]
-    fun test_withdraw_fees_empty_treasury() {
+    fun test_treasury_address_functionality() {
         let (mut scenario, admin_cap, mut config, clock) = setup_test();
         let ctx = test::ctx(&mut scenario);
         
-        // Try to withdraw fees when treasury is empty
-        coin_flip::withdraw_fees(&admin_cap, &mut config, ctx);
+        // Check initial treasury address (should be ADMIN)
+        let initial_treasury = coin_flip::get_treasury_address(&config);
+        assert!(initial_treasury == ADMIN, 0);
+        
+        // Update treasury address
+        coin_flip::update_treasury_address(&admin_cap, &mut config, PLAYER1, ctx);
+        
+        // Verify treasury address was updated
+        let new_treasury = coin_flip::get_treasury_address(&config);
+        assert!(new_treasury == PLAYER1, 1);
         
         // Cleanup
         test::return_to_sender(&scenario, admin_cap);
@@ -221,8 +223,6 @@ module sui_coin_flip::coin_flip_extended_tests {
         clock::destroy_for_testing(clock);
         test::end(scenario);
     }
-
-
 
     #[test]
     fun test_config_updated_event_structure() {
@@ -267,7 +267,7 @@ module sui_coin_flip::coin_flip_extended_tests {
         
         // Verify the game was created successfully
         test::next_tx(&mut scenario, PLAYER2);
-        let game = test::take_shared<Game>(&scenario);
+        let game = test::take_shared<Game<SUI>>(&scenario);
         let (_, game_bet_amount, _, is_active, _) = coin_flip::get_game_info(&game);
         assert!(game_bet_amount == bet_amount, 0);
         assert!(is_active == true, 1);

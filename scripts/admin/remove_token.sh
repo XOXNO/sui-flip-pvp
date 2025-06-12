@@ -1,13 +1,14 @@
 #!/bin/bash
 
-# Withdraw accumulated fees from coin flip contract
-# Usage: ./withdraw_fees.sh <network> <rpc_url> <gas_budget>
+# Remove token from coin flip game whitelist
+# Usage: ./remove_token.sh <network> <token_type> <rpc_url> <gas_budget>
 
 set -e
 
 NETWORK=$1
-RPC_URL=$2
-GAS_BUDGET=$3
+TOKEN_TYPE=$2
+RPC_URL=$3
+GAS_BUDGET=$4
 
 # Colors
 GREEN='\033[0;32m'
@@ -16,9 +17,29 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Check parameters
-if [ -z "$NETWORK" ] || [ -z "$RPC_URL" ] || [ -z "$GAS_BUDGET" ]; then
-    echo -e "${RED}Usage: $0 <network> <rpc_url> <gas_budget>${NC}"
+if [ -z "$NETWORK" ] || [ -z "$TOKEN_TYPE" ] || [ -z "$RPC_URL" ] || [ -z "$GAS_BUDGET" ]; then
+    echo -e "${RED}Usage: $0 <network> <token_type> <rpc_url> <gas_budget>${NC}"
+    echo -e "${YELLOW}Example: $0 testnet 0x123::usdc::USDC https://fullnode.testnet.sui.io:443 200000000${NC}"
+    echo -e "${RED}Warning: Do not remove SUI token as it's the primary currency${NC}"
     exit 1
+fi
+
+# Validate token type format (should look like package::module::Type)
+if [[ ! "$TOKEN_TYPE" =~ ^0x[a-fA-F0-9]+::[a-zA-Z_][a-zA-Z0-9_]*::[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+    echo -e "${RED}Error: Invalid token type format. Expected: 0x<package>::<module>::<Type>${NC}"
+    echo -e "${YELLOW}Example: 0x2::sui::SUI or 0x123abc::usdc::USDC${NC}"
+    exit 1
+fi
+
+# Warning for SUI token removal
+if [[ "$TOKEN_TYPE" == "0x2::sui::SUI" ]]; then
+    echo -e "${RED}WARNING: You are attempting to remove SUI token from whitelist!${NC}"
+    echo -e "${RED}This will prevent all SUI-based games. Are you sure? (y/N)${NC}"
+    read -r confirmation
+    if [[ ! "$confirmation" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Operation cancelled.${NC}"
+        exit 0
+    fi
 fi
 
 # Check if deployment config exists
@@ -36,39 +57,17 @@ PACKAGE_ID=$(jq -r '.packageId' "$CONFIG_FILE")
 GAME_CONFIG=$(jq -r '.gameConfig' "$CONFIG_FILE")
 ADMIN_CAP=$(jq -r '.adminCap' "$CONFIG_FILE")
 
-echo -e "${GREEN}Checking treasury balance...${NC}"
-
-# First, let's check the current treasury balance by querying the GameConfig object
-TREASURY_INFO=$(sui client object "$GAME_CONFIG" --json 2>/dev/null || echo "{}")
-TREASURY_BALANCE=$(echo "$TREASURY_INFO" | jq -r '.content.fields.treasury_balance // 0' 2>/dev/null || echo "0")
-
-if [ "$TREASURY_BALANCE" = "0" ] || [ -z "$TREASURY_BALANCE" ]; then
-    echo -e "${RED}Treasury is empty, nothing to withdraw${NC}"
-    exit 0
-fi
-
-# Convert to SUI for display
-TREASURY_SUI=$(echo "scale=9; $TREASURY_BALANCE/1000000000" | bc)
-
-echo -e "${GREEN}Withdrawing fees from treasury...${NC}"
-echo -e "  Amount: ${YELLOW}$TREASURY_BALANCE MIST ($TREASURY_SUI SUI)${NC}"
+echo -e "${GREEN}Removing token from whitelist: $TOKEN_TYPE${NC}"
 echo -e "  Package: ${YELLOW}$PACKAGE_ID${NC}"
 echo -e "  GameConfig: ${YELLOW}$GAME_CONFIG${NC}"
 echo -e "  AdminCap: ${YELLOW}$ADMIN_CAP${NC}"
-
-# Confirm withdrawal
-read -p "Are you sure you want to withdraw all fees? (yes/no) " -r
-echo
-if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-    echo -e "${RED}Operation cancelled${NC}"
-    exit 0
-fi
 
 # Execute the transaction
 TX_OUTPUT=$(sui client call \
     --package "$PACKAGE_ID" \
     --module "coin_flip" \
-    --function "withdraw_fees" \
+    --function "remove_whitelisted_token" \
+    --type-args "$TOKEN_TYPE" \
     --args "$ADMIN_CAP" "$GAME_CONFIG" \
     --gas-budget "$GAS_BUDGET" \
     --json 2>&1)
@@ -105,25 +104,24 @@ fi
 
 TX_DIGEST=$(echo "$CLEAN_OUTPUT" | jq -r '.digest')
 
-# Update config with withdrawal info
+# Update config by removing the token from whitelisted tokens
 UPDATED_CONFIG=$(jq \
-    --arg withdrawnAmount "$TREASURY_BALANCE" \
-    --arg withdrawDate "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+    --arg tokenType "$TOKEN_TYPE" \
+    --arg updateDate "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
     --arg txDigest "$TX_DIGEST" \
-    '.contractState.treasuryBalance = 0 |
-    .lastWithdrawal = {
-        "amount": ($withdrawnAmount | tonumber),
-        "amountSUI": (($withdrawnAmount | tonumber) / 1000000000),
+    '.contractState.whitelistedTokens = (.contractState.whitelistedTokens // []) - [$tokenType] |
+    .lastTokenUpdate = {
+        "action": "remove",
+        "tokenType": $tokenType,
         "transaction": $txDigest,
-        "date": $withdrawDate
+        "date": $updateDate
     }' "$CONFIG_FILE")
 
 echo "$UPDATED_CONFIG" > "$CONFIG_FILE"
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}Fee Withdrawal Complete!${NC}"
-echo -e "  Amount withdrawn: ${YELLOW}$TREASURY_BALANCE MIST ($TREASURY_SUI SUI)${NC}"
+echo -e "${GREEN}Token Whitelist Removal Complete!${NC}"
+echo -e "  Token: ${YELLOW}$TOKEN_TYPE${NC}"
 echo -e "  Transaction: ${YELLOW}$TX_DIGEST${NC}"
-echo -e "  Recipient: ${YELLOW}$(sui client active-address)${NC}"
-echo -e "${GREEN}Treasury is now empty${NC}"
+echo -e "${RED}Games can no longer be created with this token${NC}"
 echo -e "${GREEN}========================================${NC}" 

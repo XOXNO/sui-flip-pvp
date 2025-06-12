@@ -66,12 +66,12 @@ IS_PAUSED=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.is_paused')
 FEE_PERCENTAGE=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.fee_percentage')
 MIN_BET=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.min_bet_amount')
 MAX_BET=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.max_bet_amount')
-TREASURY_BALANCE=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.treasury_balance')
+TREASURY_ADDRESS=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.treasury_address')
+MAX_GAMES_PER_TX=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.max_games_per_transaction')
 
 # Convert amounts to SUI for display
 MIN_BET_SUI=$(echo "scale=9; $MIN_BET/1000000000" | bc)
 MAX_BET_SUI=$(echo "scale=9; $MAX_BET/1000000000" | bc)
-TREASURY_SUI=$(echo "scale=9; $TREASURY_BALANCE/1000000000" | bc)
 
 # Display contract state with colors
 if [ "$IS_PAUSED" = "true" ]; then
@@ -83,12 +83,8 @@ fi
 echo -e "  Fee Percentage: ${YELLOW}$FEE_PERCENTAGE bps ($(echo "scale=2; $FEE_PERCENTAGE/100" | bc)%)${NC}"
 echo -e "  Min Bet: ${YELLOW}$MIN_BET MIST ($MIN_BET_SUI SUI)${NC}"
 echo -e "  Max Bet: ${YELLOW}$MAX_BET MIST ($MAX_BET_SUI SUI)${NC}"
-
-if [ "$TREASURY_BALANCE" -gt 0 ]; then
-    echo -e "  Treasury: ${YELLOW}$TREASURY_BALANCE MIST ($TREASURY_SUI SUI)${NC}"
-else
-    echo -e "  Treasury: ${YELLOW}Empty${NC}"
-fi
+echo -e "  Treasury Address: ${YELLOW}$TREASURY_ADDRESS${NC}"
+echo -e "  Max Games per Tx: ${YELLOW}$MAX_GAMES_PER_TX${NC}"
 
 echo ""
 
@@ -123,13 +119,13 @@ if [ ! -z "$LAST_PAUSE_ACTION" ] && [ "$LAST_PAUSE_ACTION" != "null" ]; then
     echo -e "  Last Pause Action: ${YELLOW}$PAUSE_ACTION${NC} on $PAUSE_DATE (${BLUE}$PAUSE_TX${NC})"
 fi
 
-# Check for recent withdrawals
-LAST_WITHDRAWAL=$(jq -r '.lastWithdrawal // empty' "$CONFIG_FILE")
-if [ ! -z "$LAST_WITHDRAWAL" ] && [ "$LAST_WITHDRAWAL" != "null" ]; then
-    WITHDRAWAL_AMOUNT=$(echo "$LAST_WITHDRAWAL" | jq -r '.amountSUI')
-    WITHDRAWAL_DATE=$(echo "$LAST_WITHDRAWAL" | jq -r '.date')
-    WITHDRAWAL_TX=$(echo "$LAST_WITHDRAWAL" | jq -r '.transaction')
-    echo -e "  Last Withdrawal: ${YELLOW}$WITHDRAWAL_AMOUNT SUI${NC} on $WITHDRAWAL_DATE (${BLUE}$WITHDRAWAL_TX${NC})"
+# Check for recent treasury updates
+LAST_TREASURY_UPDATE=$(jq -r '.lastTreasuryUpdate // empty' "$CONFIG_FILE")
+if [ ! -z "$LAST_TREASURY_UPDATE" ] && [ "$LAST_TREASURY_UPDATE" != "null" ]; then
+    TREASURY_UPDATE_ADDRESS=$(echo "$LAST_TREASURY_UPDATE" | jq -r '.treasuryAddress')
+    TREASURY_UPDATE_DATE=$(echo "$LAST_TREASURY_UPDATE" | jq -r '.date')
+    TREASURY_UPDATE_TX=$(echo "$LAST_TREASURY_UPDATE" | jq -r '.transaction')
+    echo -e "  Last Treasury Update: ${YELLOW}$TREASURY_UPDATE_ADDRESS${NC} on $TREASURY_UPDATE_DATE (${BLUE}$TREASURY_UPDATE_TX${NC})"
 fi
 
 echo ""
@@ -138,13 +134,17 @@ echo ""
 echo -e "${BLUE}Available Commands:${NC}"
 echo -e "  make set-fee FEE_BPS=<bps> NETWORK=$NETWORK"
 echo -e "  make update-limits MIN_BET=<amount> MAX_BET=<amount> NETWORK=$NETWORK"
+echo -e "  make update-treasury TREASURY_ADDRESS=<address> NETWORK=$NETWORK"
+echo -e "  make update-max-games MAX_GAMES=<number> NETWORK=$NETWORK"
 if [ "$IS_PAUSED" = "true" ]; then
     echo -e "  make unpause NETWORK=$NETWORK"
 else
     echo -e "  make pause NETWORK=$NETWORK"
 fi
-if [ "$TREASURY_BALANCE" -gt 0 ]; then
-    echo -e "  make withdraw-fees NETWORK=$NETWORK"
-fi
+
+echo ""
+echo -e "${BLUE}Treasury Information:${NC}"
+echo -e "  Fees are automatically sent to: ${YELLOW}$TREASURY_ADDRESS${NC}"
+echo -e "  No manual withdrawal needed - fees transfer directly during gameplay"
 
 echo -e "${GREEN}========================================${NC}" 

@@ -38,15 +38,12 @@ help:
 	@echo "  set-fee         - Set game fee percentage (FEE_BPS=250)"
 	@echo "  update-limits   - Update bet limits (MIN_BET=10000000 MAX_BET=1000000000000)"
 	@echo "  update-max-games - Update max games per transaction (MAX_GAMES=100)"
+	@echo "  update-treasury - Update treasury address (TREASURY_ADDRESS=<address>)"
+	@echo "  add-token       - Add token to whitelist (TOKEN_TYPE=0x2::sui::SUI)"
+	@echo "  remove-token    - Remove token from whitelist (TOKEN_TYPE=0x123::usdc::USDC)"
+	@echo "  list-tokens     - List all whitelisted tokens"
 	@echo "  pause           - Pause contract operations"
 	@echo "  unpause         - Resume contract operations"
-	@echo "  withdraw-fees   - Withdraw accumulated fees"
-	@echo ""
-	@echo "Migration Commands (after upgrades):"
-	@echo "  migrate-treasury    - Withdraw treasury from old contract to admin wallet"
-	@echo "  migrate-config      - Migrate configuration settings (fee, limits, pause)"
-	@echo "  migrate-all         - Migrate everything (treasury + config)"
-	@echo "  check-old-configs   - Check status of old configurations"
 	@echo ""
 	@echo "Development & Utility Commands:"
 	@echo "  dev-setup       - Complete development setup (build + deploy)"
@@ -59,6 +56,8 @@ help:
 	@echo "  FEE_BPS         - Fee in basis points (for set-fee command)"
 	@echo "  MIN_BET         - Minimum bet amount in MIST (for update-limits)"
 	@echo "  MAX_BET         - Maximum bet amount in MIST (for update-limits)"
+	@echo "  TREASURY_ADDRESS - Treasury wallet address (for update-treasury)"
+	@echo "  TOKEN_TYPE      - Token type for whitelist operations (0x2::sui::SUI)"
 
 # Build the Move package
 build:
@@ -109,6 +108,38 @@ update-max-games:
 	@echo "$(GREEN)Updating max games per transaction to $(MAX_GAMES)...$(NC)"
 	@./scripts/admin/update_max_games.sh $(NETWORK) $(MAX_GAMES) $(RPC_URL) $(GAS_BUDGET)
 
+# Admin function: Update treasury address
+update-treasury:
+	@if [ -z "$(TREASURY_ADDRESS)" ]; then \
+		echo "$(RED)Error: TREASURY_ADDRESS not set. Usage: make update-treasury TREASURY_ADDRESS=<address>$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Updating treasury address to $(TREASURY_ADDRESS)...$(NC)"
+	@./scripts/admin/update_treasury_address.sh $(NETWORK) $(TREASURY_ADDRESS) $(RPC_URL) $(GAS_BUDGET)
+
+# Admin function: Add token to whitelist
+add-token:
+	@if [ -z "$(TOKEN_TYPE)" ]; then \
+		echo "$(RED)Error: TOKEN_TYPE not set. Usage: make add-token TOKEN_TYPE=0x2::sui::SUI$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Adding token $(TOKEN_TYPE) to whitelist...$(NC)"
+	@./scripts/admin/add_token.sh $(NETWORK) $(TOKEN_TYPE) $(RPC_URL) $(GAS_BUDGET)
+
+# Admin function: Remove token from whitelist
+remove-token:
+	@if [ -z "$(TOKEN_TYPE)" ]; then \
+		echo "$(RED)Error: TOKEN_TYPE not set. Usage: make remove-token TOKEN_TYPE=0x123::usdc::USDC$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Removing token $(TOKEN_TYPE) from whitelist...$(NC)"
+	@./scripts/admin/remove_token.sh $(NETWORK) $(TOKEN_TYPE) $(RPC_URL) $(GAS_BUDGET)
+
+# Admin function: List whitelisted tokens
+list-tokens:
+	@echo "$(GREEN)Fetching whitelisted tokens on $(NETWORK)...$(NC)"
+	@./scripts/admin/list_tokens.sh $(NETWORK) $(RPC_URL)
+
 # Admin function: Pause contract
 pause:
 	@echo "$(GREEN)Pausing contract...$(NC)"
@@ -118,31 +149,6 @@ pause:
 unpause:
 	@echo "$(GREEN)Unpausing contract...$(NC)"
 	@./scripts/admin/unpause.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
-
-# Admin function: Withdraw accumulated fees
-withdraw-fees:
-	@echo "$(GREEN)Withdrawing accumulated fees...$(NC)"
-	@./scripts/admin/withdraw_fees.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
-
-# Migration function: Migrate treasury from old to new contract
-migrate-treasury:
-	@echo "$(GREEN)Migrating treasury from old to new contract...$(NC)"
-	@./scripts/migrate/migrate_treasury.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
-
-# Migration function: Migrate configuration settings
-migrate-config:
-	@echo "$(GREEN)Migrating configuration settings...$(NC)"
-	@./scripts/migrate/migrate_config.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
-
-# Migration function: Migrate everything (treasury + config)
-migrate-all:
-	@echo "$(GREEN)Migrating everything from old to new contract...$(NC)"
-	@./scripts/migrate/migrate_all.sh $(NETWORK) $(RPC_URL) $(GAS_BUDGET)
-
-# Check status of old configurations
-check-old-configs:
-	@echo "$(GREEN)Checking status of old configurations...$(NC)"
-	@./scripts/migrate/check_old_configs.sh $(NETWORK) $(RPC_URL)
 
 # Clean build artifacts
 clean:
@@ -172,25 +178,17 @@ examples:
 	@echo "Set fee to 2.5% (250 bps):"
 	@echo "  make set-fee FEE_BPS=250 NETWORK=testnet"
 	@echo ""
-	@echo "Update bet limits (0.01 SUI min, 1000 SUI max):"
-	@echo "  make update-limits MIN_BET=10000000 MAX_BET=1000000000000 NETWORK=testnet"
+	@echo "Update bet limits (0.2 SUI min, 1000 SUI max):"
+	@echo "  make update-limits MIN_BET=200000000 MAX_BET=1000000000000 NETWORK=testnet"
+	@echo ""
+	@echo "Update treasury address:"
+	@echo "  make update-treasury TREASURY_ADDRESS=0x123...abc NETWORK=testnet"
+	@echo ""
+	@echo "Add USDC token to whitelist:"
+	@echo "  make add-token TOKEN_TYPE=0x123::usdc::USDC NETWORK=testnet"
+	@echo ""
+	@echo "Remove token from whitelist:"
+	@echo "  make remove-token TOKEN_TYPE=0x123::usdc::USDC NETWORK=testnet"
 	@echo ""
 	@echo "Pause contract:"
-	@echo "  make pause NETWORK=testnet"
-	@echo ""
-	@echo "Withdraw fees:"
-	@echo "  make withdraw-fees NETWORK=testnet"
-	@echo ""
-	@echo "$(YELLOW)Migration Examples (after upgrades):$(NC)"
-	@echo ""
-	@echo "Check what needs migration:"
-	@echo "  make check-old-configs NETWORK=testnet"
-	@echo ""
-	@echo "Migrate treasury funds only:"
-	@echo "  make migrate-treasury NETWORK=testnet"
-	@echo ""
-	@echo "Migrate configuration settings only:"
-	@echo "  make migrate-config NETWORK=testnet"
-	@echo ""
-	@echo "Migrate everything at once:"
-	@echo "  make migrate-all NETWORK=testnet" 
+	@echo "  make pause NETWORK=testnet" 
