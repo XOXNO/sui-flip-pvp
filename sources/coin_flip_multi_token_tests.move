@@ -20,6 +20,12 @@ module sui_coin_flip::coin_flip_multi_token_tests {
     
     // Test amounts
     const TEST_BET_AMOUNT: u64 = 200_000_000; // 0.2 SUI
+    
+    // Standard token limits for testing
+    const USDC_MIN_BET: u64 = 1_000_000; // 1 USDC (6 decimals)
+    const USDC_MAX_BET: u64 = 500_000_000; // 500 USDC (to accommodate TEST_BET_AMOUNT)
+    const USDT_MIN_BET: u64 = 1_000_000; // 1 USDT (6 decimals)
+    const USDT_MAX_BET: u64 = 500_000_000; // 500 USDT
 
     // Mock token types for testing
     public struct USDC has drop {}
@@ -27,7 +33,8 @@ module sui_coin_flip::coin_flip_multi_token_tests {
 
     #[test]
     fun test_sui_token_whitelisted_by_default() {
-        let mut scenario = test::begin(ADMIN);
+        let scenario = test::begin(ADMIN);
+        let mut scenario = scenario;
         
         // Initialize contract
         {
@@ -49,7 +56,8 @@ module sui_coin_flip::coin_flip_multi_token_tests {
 
     #[test]
     fun test_admin_add_token_to_whitelist() {
-        let mut scenario = test::begin(ADMIN);
+        let scenario = test::begin(ADMIN);
+        let mut scenario = scenario;
         
         // Initialize contract
         {
@@ -64,8 +72,14 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             // USDC should not be whitelisted initially
             assert!(!coin_flip::is_token_whitelisted<USDC>(&config), 0);
             
-            // Admin adds USDC to whitelist
-            coin_flip::add_whitelisted_token<USDC>(&admin_cap, &mut config, ctx(&mut scenario));
+            // Admin adds USDC to whitelist with standard limits
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
             
             // USDC should now be whitelisted
             assert!(coin_flip::is_token_whitelisted<USDC>(&config), 1);
@@ -79,7 +93,8 @@ module sui_coin_flip::coin_flip_multi_token_tests {
 
     #[test]
     fun test_admin_remove_token_from_whitelist() {
-        let mut scenario = test::begin(ADMIN);
+        let scenario = test::begin(ADMIN);
+        let mut scenario = scenario;
         
         // Initialize contract
         {
@@ -92,7 +107,13 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             let mut config = test::take_shared<GameConfig>(&scenario);
             
             // Add USDC to whitelist first
-            coin_flip::add_whitelisted_token<USDC>(&admin_cap, &mut config, ctx(&mut scenario));
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
             assert!(coin_flip::is_token_whitelisted<USDC>(&config), 0);
             
             // Remove USDC from whitelist
@@ -125,7 +146,13 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             let mut config = test::take_shared<GameConfig>(&scenario);
             
             // Try to add token with fake admin cap (should fail)
-            coin_flip::add_whitelisted_token<USDC>(&fake_admin_cap, &mut config, ctx(&mut scenario));
+            coin_flip::add_whitelisted_token<USDC>(
+                &fake_admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
             
             test::return_to_sender(&scenario, fake_admin_cap);
             test::return_shared(config);
@@ -150,7 +177,13 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             let admin_cap = test::take_from_sender<AdminCap>(&scenario);
             let mut config = test::take_shared<GameConfig>(&scenario);
             
-            coin_flip::add_whitelisted_token<USDC>(&admin_cap, &mut config, ctx(&mut scenario));
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
             
             test::return_to_sender(&scenario, admin_cap);
             test::return_shared(config);
@@ -213,7 +246,13 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             let admin_cap = test::take_from_sender<AdminCap>(&scenario);
             let mut config = test::take_shared<GameConfig>(&scenario);
             
-            coin_flip::add_whitelisted_token<USDC>(&admin_cap, &mut config, ctx(&mut scenario));
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
             
             test::return_to_sender(&scenario, admin_cap);
             test::return_shared(config);
@@ -263,7 +302,13 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             let admin_cap = test::take_from_sender<AdminCap>(&scenario);
             let mut config = test::take_shared<GameConfig>(&scenario);
             
-            coin_flip::add_whitelisted_token<USDC>(&admin_cap, &mut config, ctx(&mut scenario));
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
             
             test::return_to_sender(&scenario, admin_cap);
             test::return_shared(config);
@@ -315,10 +360,6 @@ module sui_coin_flip::coin_flip_multi_token_tests {
         test::end(scenario);
     }
 
-    // Note: The token mismatch test is enforced at compile time by Move's type system
-    // This is actually better security than runtime checks!
-    // If you try to call join_games<USDC> with a Coin<USDT>, it won't compile.
-
     #[test]
     fun test_successful_multi_token_games() {
         let mut scenario = test::begin(ADMIN);
@@ -340,7 +381,13 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             let admin_cap = test::take_from_sender<AdminCap>(&scenario);
             let mut config = test::take_shared<GameConfig>(&scenario);
             
-            coin_flip::add_whitelisted_token<USDC>(&admin_cap, &mut config, ctx(&mut scenario));
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
             
             test::return_to_sender(&scenario, admin_cap);
             test::return_shared(config);
@@ -429,7 +476,13 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             let admin_cap = test::take_from_sender<AdminCap>(&scenario);
             let mut config = test::take_shared<GameConfig>(&scenario);
             
-            coin_flip::add_whitelisted_token<USDC>(&admin_cap, &mut config, ctx(&mut scenario));
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
             
             test::return_to_sender(&scenario, admin_cap);
             test::return_shared(config);
@@ -481,8 +534,20 @@ module sui_coin_flip::coin_flip_multi_token_tests {
             let _whitelist = coin_flip::get_whitelisted_tokens(&config);
             
             // Add USDC and USDT
-            coin_flip::add_whitelisted_token<USDC>(&admin_cap, &mut config, ctx(&mut scenario));
-            coin_flip::add_whitelisted_token<USDT>(&admin_cap, &mut config, ctx(&mut scenario));
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
+            coin_flip::add_whitelisted_token<USDT>(
+                &admin_cap, 
+                &mut config, 
+                USDT_MIN_BET, 
+                USDT_MAX_BET, 
+                ctx(&mut scenario)
+            );
             
             // Verify tokens are whitelisted
             assert!(coin_flip::is_token_whitelisted<SUI>(&config), 0);
@@ -495,4 +560,66 @@ module sui_coin_flip::coin_flip_multi_token_tests {
 
         test::end(scenario);
     }
-} 
+
+    #[test]
+    fun test_per_token_limits_functionality() {
+        let mut scenario = test::begin(ADMIN);
+        
+        // Initialize contract
+        {
+            coin_flip::init_for_testing(ctx(&mut scenario));
+        };
+
+        next_tx(&mut scenario, ADMIN);
+        {
+            let admin_cap = test::take_from_sender<AdminCap>(&scenario);
+            let mut config = test::take_shared<GameConfig>(&scenario);
+            
+            // Add USDC with specific limits
+            coin_flip::add_whitelisted_token<USDC>(
+                &admin_cap, 
+                &mut config, 
+                USDC_MIN_BET, 
+                USDC_MAX_BET, 
+                ctx(&mut scenario)
+            );
+            
+            // Verify USDC is whitelisted and has correct limits
+            assert!(coin_flip::is_token_whitelisted<USDC>(&config), 0);
+            let (enabled, min_bet, max_bet) = coin_flip::get_token_config<USDC>(&config);
+            assert!(enabled == true, 1);
+            assert!(min_bet == USDC_MIN_BET, 2);
+            assert!(max_bet == USDC_MAX_BET, 3);
+            
+            // Test update limits
+            let new_min = USDC_MIN_BET * 2;
+            let new_max = USDC_MAX_BET * 2;
+            coin_flip::update_token_limits<USDC>(
+                &admin_cap,
+                &mut config,
+                new_min,
+                new_max,
+                ctx(&mut scenario)
+            );
+            
+            // Verify limits were updated
+            let (enabled, updated_min, updated_max) = coin_flip::get_token_config<USDC>(&config);
+            assert!(enabled == true, 4);
+            assert!(updated_min == new_min, 5);
+            assert!(updated_max == new_max, 6);
+            
+            // Test disable token
+            coin_flip::set_token_enabled<USDC>(&admin_cap, &mut config, false, ctx(&mut scenario));
+            
+            // Verify token is disabled
+            assert!(coin_flip::is_token_whitelisted<USDC>(&config) == false, 7);
+            let (disabled, _, _) = coin_flip::get_token_config<USDC>(&config);
+            assert!(disabled == false, 8);
+            
+            test::return_to_sender(&scenario, admin_cap);
+            test::return_shared(config);
+        };
+
+        test::end(scenario);
+    }
+}

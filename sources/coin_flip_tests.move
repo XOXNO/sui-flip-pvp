@@ -269,12 +269,11 @@ module sui_coin_flip::coin_flip_tests {
         next_tx(&mut scenario, PLAYER1);
         {
             let game = test::take_shared<Game<SUI>>(&scenario);
-            let (creator, bet_amount, creator_choice_heads, is_active, _created_at) = coin_flip::get_game_info(&game);
+            let (creator, bet_amount, creator_choice_heads, _created_at) = coin_flip::get_game_info(&game);
             
             assert!(creator == PLAYER1, 0);
             assert!(bet_amount == 200_000_000, 1);
             assert!(creator_choice_heads == true, 2);
-            assert!(is_active == true, 3);
             
             test::return_shared(game);
         };
@@ -353,51 +352,6 @@ module sui_coin_flip::coin_flip_tests {
             
             test::return_shared(config);
             clock::destroy_for_testing(clock);
-        };
-
-        test::end(scenario);
-    }
-
-    #[test]
-    fun test_inactive_game_state() {
-        let mut scenario = test::begin(ADMIN);
-        
-        // Initialize contract
-        {
-            coin_flip::init_for_testing(ctx(&mut scenario));
-        };
-
-        // Player 1 creates a game
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::create_game(bet_coin, true, &config, &clock, ctx(&mut scenario));
-            
-            test::return_shared(config);
-            clock::destroy_for_testing(clock);
-        };
-
-        // Set the game as inactive using test helper
-        next_tx(&mut scenario, ADMIN);
-        {
-            let mut game = test::take_shared<Game<SUI>>(&scenario);
-            coin_flip::set_game_inactive_for_testing(&mut game);
-            test::return_shared(game);
-        };
-
-        // Verify the game is now inactive
-        next_tx(&mut scenario, PLAYER2);
-        {
-            let game = test::take_shared<Game<SUI>>(&scenario);
-            let (_, _, _, is_active, _) = coin_flip::get_game_info(&game);
-            
-            // Verify game is inactive - in real usage, calling join_game 
-            // on this inactive game would trigger EGameNotFound
-            assert!(!is_active, 0);
-            
-            test::return_shared(game);
         };
 
         test::end(scenario);
@@ -830,67 +784,6 @@ module sui_coin_flip::coin_flip_tests {
 
         test::end(scenario);
     }
-
-    #[test]
-    #[expected_failure(abort_code = coin_flip::EGameNotFound)]
-    fun test_bulk_join_games_inactive_games() {
-        let mut scenario = test::begin(ADMIN);
-        
-        // Initialize contract
-        {
-            coin_flip::init_for_testing(ctx(&mut scenario));
-        };
-
-        // Create Random object using system address
-        next_tx(&mut scenario, SYSTEM);
-        {
-            random::create_for_testing(ctx(&mut scenario));
-        };
-
-        // Player 1 creates a game
-        next_tx(&mut scenario, PLAYER1);
-        {
-            let config = test::take_shared<GameConfig>(&scenario);
-            let clock = clock::create_for_testing(ctx(&mut scenario));
-            let bet_coin = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            coin_flip::create_game(bet_coin, true, &config, &clock, ctx(&mut scenario));
-            
-            test::return_shared(config);
-            clock::destroy_for_testing(clock);
-        };
-
-        // Set the game as inactive using test helper
-        next_tx(&mut scenario, ADMIN);
-        {
-            let mut game = test::take_shared<Game<SUI>>(&scenario);
-            coin_flip::set_game_inactive_for_testing(&mut game);
-            test::return_shared(game);
-        };
-
-        // Player 2 tries to join inactive game (should fail)
-        next_tx(&mut scenario, PLAYER2);
-        {
-            let game = test::take_shared<Game<SUI>>(&scenario);
-            let config = test::take_shared<GameConfig>(&scenario);
-            let rnd = test::take_shared<random::Random>(&scenario);
-            
-            // Create vector with inactive game
-            let mut games = vector::empty<Game<SUI>>();
-            vector::push_back(&mut games, game);
-            
-            // Create payment
-            let payment = coin::mint_for_testing<SUI>(TEST_BET_AMOUNT, ctx(&mut scenario));
-            
-            // Try to join inactive game (should fail)
-            coin_flip::join_games(games, payment, &config, &rnd, ctx(&mut scenario));
-            
-            test::return_shared(config);
-            test::return_shared(rnd);
-        };
-
-        test::end(scenario);
-    }
-
     // ======== Max Games Per Transaction Tests ========
 
     #[test]

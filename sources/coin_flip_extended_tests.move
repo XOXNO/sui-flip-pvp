@@ -4,6 +4,7 @@ module sui_coin_flip::coin_flip_extended_tests {
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
     use sui::clock::{Self, Clock};
+    use sui::random;
 
     use sui_coin_flip::coin_flip::{
         Self, 
@@ -20,6 +21,12 @@ module sui_coin_flip::coin_flip_extended_tests {
     const PLAYER1: address = @0x2;
     const PLAYER2: address = @0x3;
 
+    // Test token types for testing various scenarios
+    public struct FAKE_TOKEN_LIMITS has drop {}
+    public struct FAKE_TOKEN_ENABLED has drop {}
+    public struct TEST_TOKEN_CREATE has drop {}
+    public struct TEST_TOKEN_JOIN has drop {}
+
     // Test helper function to create coins
     fun mint_sui(amount: u64, ctx: &mut TxContext): Coin<SUI> {
         coin::mint_for_testing<SUI>(amount, ctx)
@@ -27,7 +34,8 @@ module sui_coin_flip::coin_flip_extended_tests {
 
     // Test helper to setup test environment
     fun setup_test(): (Scenario, AdminCap, GameConfig, Clock) {
-        let mut scenario = test::begin(ADMIN);
+        let scenario = test::begin(ADMIN);
+        let mut scenario = scenario;
         
         // Initialize the module
         {
@@ -48,18 +56,18 @@ module sui_coin_flip::coin_flip_extended_tests {
     }
 
     #[test]
-    fun test_update_bet_limits_success() {
+    fun test_update_token_limits_success() {
         let (mut scenario, admin_cap, mut config, clock) = setup_test();
         let ctx = test::ctx(&mut scenario);
         
-        // Update bet limits
+        // Update bet limits for SUI token specifically
         let new_min = 5_000_000; // 0.005 SUI
         let new_max = 2_000_000_000_000; // 2000 SUI
         
-        coin_flip::update_bet_limits(&admin_cap, &mut config, new_min, new_max, ctx);
+        coin_flip::update_token_limits<SUI>(&admin_cap, &mut config, new_min, new_max, ctx);
         
-        // Verify limits were updated
-        let (min_bet, max_bet) = coin_flip::get_bet_limits(&config);
+        // Verify limits were updated for SUI
+        let (min_bet, max_bet) = coin_flip::get_token_bet_limits<SUI>(&config);
         assert!(min_bet == new_min, 0);
         assert!(max_bet == new_max, 1);
         
@@ -72,12 +80,12 @@ module sui_coin_flip::coin_flip_extended_tests {
 
     #[test]
     #[expected_failure(abort_code = EInvalidBetAmount)]
-    fun test_update_bet_limits_invalid_zero_min() {
+    fun test_update_token_limits_invalid_zero_min() {
         let (mut scenario, admin_cap, mut config, clock) = setup_test();
         let ctx = test::ctx(&mut scenario);
         
-        // Try to set min bet to zero
-        coin_flip::update_bet_limits(&admin_cap, &mut config, 0, 1000, ctx);
+        // Try to set min bet to zero for SUI
+        coin_flip::update_token_limits<SUI>(&admin_cap, &mut config, 0, 1000, ctx);
         
         // Cleanup
         test::return_to_sender(&scenario, admin_cap);
@@ -88,12 +96,12 @@ module sui_coin_flip::coin_flip_extended_tests {
 
     #[test]
     #[expected_failure(abort_code = EInvalidBetAmount)]
-    fun test_update_bet_limits_min_greater_than_max() {
+    fun test_update_token_limits_min_greater_than_max() {
         let (mut scenario, admin_cap, mut config, clock) = setup_test();
         let ctx = test::ctx(&mut scenario);
         
-        // Try to set min bet greater than max bet
-        coin_flip::update_bet_limits(&admin_cap, &mut config, 2000, 1000, ctx);
+        // Try to set min bet greater than max bet for SUI
+        coin_flip::update_token_limits<SUI>(&admin_cap, &mut config, 2000, 1000, ctx);
         
         // Cleanup
         test::return_to_sender(&scenario, admin_cap);
@@ -184,10 +192,10 @@ module sui_coin_flip::coin_flip_extended_tests {
     fun test_bet_limits_with_custom_values() {
         let (mut scenario, admin_cap, mut config, clock) = setup_test();
         
-        // Update bet limits to custom values
+        // Update bet limits to custom values for SUI
         let new_min = 20_000_000; // 0.02 SUI
         let new_max = 500_000_000_000; // 500 SUI
-        coin_flip::update_bet_limits(&admin_cap, &mut config, new_min, new_max, test::ctx(&mut scenario));
+        coin_flip::update_token_limits<SUI>(&admin_cap, &mut config, new_min, new_max, test::ctx(&mut scenario));
         
         // Test bet smaller than new minimum (this should fail)
         test::next_tx(&mut scenario, PLAYER1);
@@ -232,15 +240,15 @@ module sui_coin_flip::coin_flip_extended_tests {
         // Test that updating pause state emits the correct event
         coin_flip::set_pause_state(&admin_cap, &mut config, true, ctx);
         
-        // Test that updating bet limits emits the correct event
-        coin_flip::update_bet_limits(&admin_cap, &mut config, 15_000_000, 1_500_000_000_000, ctx);
+        // Test that updating token limits emits the correct event for SUI
+        coin_flip::update_token_limits<SUI>(&admin_cap, &mut config, 15_000_000, 1_500_000_000_000, ctx);
         
         // Test that updating fee percentage emits the correct event
         coin_flip::update_fee_percentage(&admin_cap, &mut config, 300, ctx);
         
         // Verify the config values are updated
         assert!(coin_flip::is_contract_paused(&config) == true, 0);
-        let (min_bet, max_bet) = coin_flip::get_bet_limits(&config);
+        let (min_bet, max_bet) = coin_flip::get_token_bet_limits<SUI>(&config);
         assert!(min_bet == 15_000_000, 1);
         assert!(max_bet == 1_500_000_000_000, 2);
         assert!(coin_flip::get_fee_percentage(&config) == 300, 3);
@@ -256,9 +264,9 @@ module sui_coin_flip::coin_flip_extended_tests {
     fun test_edge_case_bet_limits_equal() {
         let (mut scenario, admin_cap, mut config, clock) = setup_test();
         
-        // Set min and max bet to the same value
+        // Set min and max bet to the same value for SUI
         let bet_amount = 100_000_000; // 0.1 SUI
-        coin_flip::update_bet_limits(&admin_cap, &mut config, bet_amount, bet_amount, test::ctx(&mut scenario));
+        coin_flip::update_token_limits<SUI>(&admin_cap, &mut config, bet_amount, bet_amount, test::ctx(&mut scenario));
         
         // Create a game with exactly that amount
         test::next_tx(&mut scenario, PLAYER1);
@@ -268,14 +276,124 @@ module sui_coin_flip::coin_flip_extended_tests {
         // Verify the game was created successfully
         test::next_tx(&mut scenario, PLAYER2);
         let game = test::take_shared<Game<SUI>>(&scenario);
-        let (_, game_bet_amount, _, is_active, _) = coin_flip::get_game_info(&game);
+        let (_, game_bet_amount, _, _) = coin_flip::get_game_info(&game);
         assert!(game_bet_amount == bet_amount, 0);
-        assert!(is_active == true, 1);
         
         // Cleanup
         test::return_to_address(ADMIN, admin_cap);
         test::return_shared(config);
         test::return_shared(game);
+        clock::destroy_for_testing(clock);
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::EInvalidAddress)]
+    fun test_update_treasury_address_zero_address() {
+        let (mut scenario, admin_cap, mut config, clock) = setup_test();
+        let ctx = test::ctx(&mut scenario);
+        
+        // Try to set treasury address to zero address (should fail)
+        coin_flip::update_treasury_address(&admin_cap, &mut config, @0x0, ctx);
+        
+        // Cleanup
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(config);
+        clock::destroy_for_testing(clock);
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::ETokenNotWhitelisted)]
+    fun test_update_token_limits_for_non_whitelisted_token() {
+        let (mut scenario, admin_cap, mut config, clock) = setup_test();
+        let ctx = test::ctx(&mut scenario);
+        
+        // Try to update token limits for a token that's not whitelisted (should fail)
+        coin_flip::update_token_limits<FAKE_TOKEN_LIMITS>(&admin_cap, &mut config, 1000, 2000, ctx);
+        
+        // Cleanup
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(config);
+        clock::destroy_for_testing(clock);
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::ETokenNotWhitelisted)]
+    fun test_set_token_enabled_for_non_whitelisted_token() {
+        let (mut scenario, admin_cap, mut config, clock) = setup_test();
+        let ctx = test::ctx(&mut scenario);
+        
+        // Try to enable/disable a token that's not whitelisted (should fail)
+        coin_flip::set_token_enabled<FAKE_TOKEN_ENABLED>(&admin_cap, &mut config, false, ctx);
+        
+        // Cleanup
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(config);
+        clock::destroy_for_testing(clock);
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::ETokenNotWhitelisted)]
+    fun test_create_game_with_disabled_token() {
+        let (mut scenario, admin_cap, mut config, clock) = setup_test();
+        
+        // Admin adds token to whitelist
+        coin_flip::add_whitelisted_token<TEST_TOKEN_CREATE>(&admin_cap, &mut config, 1000, 2000, test::ctx(&mut scenario));
+        
+        // Admin disables the token
+        coin_flip::set_token_enabled<TEST_TOKEN_CREATE>(&admin_cap, &mut config, false, test::ctx(&mut scenario));
+        
+        // Try to create game with disabled token (should fail)
+        test::next_tx(&mut scenario, PLAYER1);
+        let bet_coin = coin::mint_for_testing<TEST_TOKEN_CREATE>(1500, test::ctx(&mut scenario));
+        coin_flip::create_game(bet_coin, true, &config, &clock, test::ctx(&mut scenario));
+        
+        // Cleanup
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(config);
+        clock::destroy_for_testing(clock);
+        test::end(scenario);
+    }
+
+    #[test]
+    #[expected_failure(abort_code = coin_flip::ETokenNotWhitelisted)]
+    fun test_join_games_with_disabled_token() {
+        let (mut scenario, admin_cap, mut config, clock) = setup_test();
+        
+        // Admin adds token to whitelist
+        coin_flip::add_whitelisted_token<TEST_TOKEN_JOIN>(&admin_cap, &mut config, 1000, 2000, test::ctx(&mut scenario));
+        
+        // Player 1 creates game with enabled token
+        test::next_tx(&mut scenario, PLAYER1);
+        let bet_coin = coin::mint_for_testing<TEST_TOKEN_JOIN>(1500, test::ctx(&mut scenario));
+        coin_flip::create_game(bet_coin, true, &config, &clock, test::ctx(&mut scenario));
+        
+        // Admin disables the token after game creation
+        test::next_tx(&mut scenario, ADMIN);
+        coin_flip::set_token_enabled<TEST_TOKEN_JOIN>(&admin_cap, &mut config, false, test::ctx(&mut scenario));
+        
+        // Create Random object for join_games
+        test::next_tx(&mut scenario, @0x0);
+        random::create_for_testing(test::ctx(&mut scenario));
+        
+        // Player 2 tries to join with disabled token (should fail)
+        test::next_tx(&mut scenario, PLAYER2);
+        let game = test::take_shared<Game<TEST_TOKEN_JOIN>>(&scenario);
+        let rnd = test::take_shared<random::Random>(&scenario);
+        
+        let mut games = vector::empty<Game<TEST_TOKEN_JOIN>>();
+        vector::push_back(&mut games, game);
+        
+        let payment = coin::mint_for_testing<TEST_TOKEN_JOIN>(1500, test::ctx(&mut scenario));
+        coin_flip::join_games(games, payment, &config, &rnd, test::ctx(&mut scenario));
+        
+        // Cleanup
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(config);
+        test::return_shared(rnd);
         clock::destroy_for_testing(clock);
         test::end(scenario);
     }

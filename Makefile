@@ -54,11 +54,12 @@ help:
 	@echo ""
 	@echo "Admin Commands:"
 	@echo "  set-fee         - Set game fee percentage (FEE_BPS=250)"
-	@echo "  update-limits   - Update bet limits (MIN_BET=10000000 MAX_BET=1000000000000)"
+	@echo "  update-limits   - Update global bet limits (DEPRECATED, use per-token limits)"
 	@echo "  update-max-games - Update max games per transaction (MAX_GAMES=100)"
 	@echo "  update-treasury - Update treasury address (TREASURY_ADDRESS=<address>)"
-	@echo "  add-token       - Add token to whitelist (TOKEN_TYPE=0x2::sui::SUI)"
+	@echo "  add-token       - Add token with limits (TOKEN_TYPE=0x2::sui::SUI MIN_BET=100000000 MAX_BET=1000000000000)"
 	@echo "  remove-token    - Remove token from whitelist (TOKEN_TYPE=0x123::usdc::USDC)"
+	@echo "  update-token-limits - Update per-token limits (TOKEN_TYPE=0x2::sui::SUI MIN_BET=200000000 MAX_BET=500000000000)"
 	@echo "  list-tokens     - List all whitelisted tokens"
 	@echo "  pause           - Pause contract operations"
 	@echo "  unpause         - Resume contract operations"
@@ -80,10 +81,11 @@ help:
 	@echo "  LEDGER_ADDRESS  - Your Ledger wallet address (auto-selects gas coin when set)"
 	@echo "  GAS_OBJECT_ID   - Specific gas object ID (optional, auto-selected if LEDGER_ADDRESS set)"
 	@echo "  FEE_BPS         - Fee in basis points (for set-fee command)"
-	@echo "  MIN_BET         - Minimum bet amount in MIST (for update-limits)"
-	@echo "  MAX_BET         - Maximum bet amount in MIST (for update-limits)"
+	@echo "  MIN_BET         - Minimum bet amount in token units (for update-limits and token operations)"
+	@echo "  MAX_BET         - Maximum bet amount in token units (for update-limits and token operations)"
 	@echo "  TREASURY_ADDRESS - Treasury wallet address (for update-treasury)"
 	@echo "  TOKEN_TYPE      - Token type for whitelist operations (0x2::sui::SUI)"
+	@echo "  MAX_GAMES       - Maximum games per transaction (for update-max-games)"
 
 # Build the Move package
 build:
@@ -165,10 +167,14 @@ update-treasury:
 	@echo "$(GREEN)Updating treasury address to $(TREASURY_ADDRESS)...$(NC)"
 	@./scripts/admin/update_treasury_address.sh $(NETWORK) $(TREASURY_ADDRESS) $(RPC_URL) $(GAS_BUDGET) $(LEDGER_MODE) $(LEDGER_ADDRESS) $(GAS_OBJECT_ID)
 
-# Admin function: Add token to whitelist
+# Admin function: Add token to whitelist with per-token limits
 add-token:
 	@if [ -z "$(TOKEN_TYPE)" ]; then \
-		echo "$(RED)Error: TOKEN_TYPE not set. Usage: make add-token TOKEN_TYPE=0x2::sui::SUI$(NC)"; \
+		echo "$(RED)Error: TOKEN_TYPE not set. Usage: make add-token TOKEN_TYPE=0x2::sui::SUI MIN_BET=100000000 MAX_BET=1000000000000$(NC)"; \
+		exit 1; \
+	fi
+	@if [ -z "$(MIN_BET)" ] || [ -z "$(MAX_BET)" ]; then \
+		echo "$(RED)Error: MIN_BET and MAX_BET not set. Usage: make add-token TOKEN_TYPE=0x2::sui::SUI MIN_BET=100000000 MAX_BET=1000000000000$(NC)"; \
 		exit 1; \
 	fi
 	@if [ "$(LEDGER_MODE)" = "true" ] && [ -z "$(LEDGER_ADDRESS)" ] && [ -z "$(GAS_OBJECT_ID)" ]; then \
@@ -176,7 +182,7 @@ add-token:
 		exit 1; \
 	fi
 	@echo "$(GREEN)Adding token $(TOKEN_TYPE) to whitelist...$(NC)"
-	@./scripts/admin/add_token.sh $(NETWORK) $(TOKEN_TYPE) $(RPC_URL) $(GAS_BUDGET) $(LEDGER_MODE) $(LEDGER_ADDRESS) $(GAS_OBJECT_ID)
+	@./scripts/admin/add_token.sh $(NETWORK) $(TOKEN_TYPE) $(MIN_BET) $(MAX_BET) $(RPC_URL) $(GAS_BUDGET) $(LEDGER_MODE) $(LEDGER_ADDRESS) $(GAS_OBJECT_ID)
 
 # Admin function: Remove token from whitelist
 remove-token:
@@ -190,6 +196,23 @@ remove-token:
 	fi
 	@echo "$(GREEN)Removing token $(TOKEN_TYPE) from whitelist...$(NC)"
 	@./scripts/admin/remove_token.sh $(NETWORK) $(TOKEN_TYPE) $(RPC_URL) $(GAS_BUDGET) $(LEDGER_MODE) $(LEDGER_ADDRESS) $(GAS_OBJECT_ID)
+
+# Admin function: Update per-token bet limits
+update-token-limits:
+	@if [ -z "$(TOKEN_TYPE)" ]; then \
+		echo "$(RED)Error: TOKEN_TYPE not set. Usage: make update-token-limits TOKEN_TYPE=0x2::sui::SUI MIN_BET=100000000 MAX_BET=1000000000000$(NC)"; \
+		exit 1; \
+	fi
+	@if [ -z "$(MIN_BET)" ] || [ -z "$(MAX_BET)" ]; then \
+		echo "$(RED)Error: MIN_BET and MAX_BET not set. Usage: make update-token-limits TOKEN_TYPE=0x2::sui::SUI MIN_BET=100000000 MAX_BET=1000000000000$(NC)"; \
+		exit 1; \
+	fi
+	@if [ "$(LEDGER_MODE)" = "true" ] && [ -z "$(LEDGER_ADDRESS)" ] && [ -z "$(GAS_OBJECT_ID)" ]; then \
+		echo "$(RED)Error: Either LEDGER_ADDRESS or GAS_OBJECT_ID is required when LEDGER_MODE=true$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Updating bet limits for token $(TOKEN_TYPE)...$(NC)"
+	@./scripts/admin/update_token_limits.sh $(NETWORK) $(TOKEN_TYPE) $(MIN_BET) $(MAX_BET) $(RPC_URL) $(GAS_BUDGET) $(LEDGER_MODE) $(LEDGER_ADDRESS) $(GAS_OBJECT_ID)
 
 # Admin function: List whitelisted tokens
 list-tokens:
@@ -279,10 +302,12 @@ examples:
 	@echo "$(GREEN)📝 Regular Commands (using sui-flip.env config):$(NC)"
 	@echo "  make deploy                    # Deploy to configured network"
 	@echo "  make set-fee FEE_BPS=250      # Set 2.5% fee"
-	@echo "  make update-limits MIN_BET=200000000 MAX_BET=1000000000000"
+	@echo "  make update-limits MIN_BET=200000000 MAX_BET=1000000000000  # DEPRECATED"
 	@echo "  make pause                     # Pause contract"
 	@echo "  make unpause                   # Resume operations"
-	@echo "  make add-token TOKEN_TYPE=0x123::usdc::USDC"
+	@echo "  make add-token TOKEN_TYPE=0x2::sui::SUI MIN_BET=100000000 MAX_BET=1000000000000"
+	@echo "  make add-token TOKEN_TYPE=0x123::usdc::USDC MIN_BET=1000000 MAX_BET=10000000"
+	@echo "  make update-token-limits TOKEN_TYPE=0x2::sui::SUI MIN_BET=200000000 MAX_BET=500000000000"
 	@echo ""
 	@echo "$(GREEN)⚙️ Configuration Management:$(NC)"
 	@echo "  make config-show              # View current settings"

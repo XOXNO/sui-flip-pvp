@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Add token to coin flip game whitelist with per-token bet limits
-# Usage: ./add_token.sh <network> <token_type> <min_bet> <max_bet> <rpc_url> <gas_budget> [ledger_mode] [ledger_address] [gas_object_id]
+# Update per-token bet limits for coin flip game
+# Usage: ./update_token_limits.sh <network> <token_type> <min_bet> <max_bet> <rpc_url> <gas_budget> [ledger_mode] [ledger_address] [gas_object_id]
 
 set -e
 
@@ -34,6 +34,16 @@ if [ -z "$NETWORK" ] || [ -z "$TOKEN_TYPE" ] || [ -z "$MIN_BET" ] || [ -z "$MAX_
     exit 1
 fi
 
+# Setup Ledger gas selection if needed
+if ! setup_ledger_gas "$LEDGER_MODE" "$LEDGER_ADDRESS" "$GAS_OBJECT_ID" "$GAS_BUDGET"; then
+    exit 1
+fi
+
+# Use the selected gas object ID
+if [ "$LEDGER_MODE" = "true" ]; then
+    GAS_OBJECT_ID="$SELECTED_GAS_OBJECT_ID"
+fi
+
 # Validate bet limits
 if [ "$MIN_BET" -gt "$MAX_BET" ]; then
     echo -e "${RED}Error: Minimum bet cannot be greater than maximum bet${NC}"
@@ -43,16 +53,6 @@ fi
 if [ "$MIN_BET" -eq 0 ]; then
     echo -e "${RED}Error: Minimum bet cannot be zero${NC}"
     exit 1
-fi
-
-# Setup Ledger gas selection if needed
-if ! setup_ledger_gas "$LEDGER_MODE" "$LEDGER_ADDRESS" "$GAS_OBJECT_ID" "$GAS_BUDGET"; then
-    exit 1
-fi
-
-# Use the selected gas object ID
-if [ "$LEDGER_MODE" = "true" ]; then
-    GAS_OBJECT_ID="$SELECTED_GAS_OBJECT_ID"
 fi
 
 # Validate token type format (should look like package::module::Type)
@@ -81,12 +81,12 @@ ADMIN_CAP=$(jq -r '.adminCap' "$CONFIG_FILE")
 MIN_BET_READABLE=$(echo "scale=9; $MIN_BET/1000000000" | bc 2>/dev/null || echo "$MIN_BET")
 MAX_BET_READABLE=$(echo "scale=9; $MAX_BET/1000000000" | bc 2>/dev/null || echo "$MAX_BET")
 
-echo -e "${GREEN}Adding token to whitelist: $TOKEN_TYPE${NC}"
+echo -e "${GREEN}Updating token bet limits: $TOKEN_TYPE${NC}"
 echo -e "  Package: ${YELLOW}$PACKAGE_ID${NC}"
 echo -e "  GameConfig: ${YELLOW}$GAME_CONFIG${NC}"
 echo -e "  AdminCap: ${YELLOW}$ADMIN_CAP${NC}"
-echo -e "  Min Bet: ${YELLOW}$MIN_BET ($MIN_BET_READABLE units)${NC}"
-echo -e "  Max Bet: ${YELLOW}$MAX_BET ($MAX_BET_READABLE units)${NC}"
+echo -e "  New Min Bet: ${YELLOW}$MIN_BET ($MIN_BET_READABLE units)${NC}"
+echo -e "  New Max Bet: ${YELLOW}$MAX_BET ($MAX_BET_READABLE units)${NC}"
 
 # Execute the transaction or generate unsigned tx bytes
 if [ "$LEDGER_MODE" = "true" ]; then
@@ -95,7 +95,7 @@ if [ "$LEDGER_MODE" = "true" ]; then
     TX_OUTPUT=$(sui client call \
         --package "$PACKAGE_ID" \
         --module "coin_flip" \
-        --function "add_whitelisted_token" \
+        --function "update_token_limits" \
         --type-args "$TOKEN_TYPE" \
         --args "$ADMIN_CAP" "$GAME_CONFIG" "$MIN_BET" "$MAX_BET" \
         --serialize-unsigned-transaction \
@@ -108,14 +108,14 @@ if [ "$LEDGER_MODE" = "true" ]; then
         exit 1
     fi
     
-    show_ledger_instructions "Add Token: $TOKEN_TYPE to Whitelist (Min: $MIN_BET, Max: $MAX_BET)" "$TX_OUTPUT"
+    show_ledger_instructions "Update Token Limits: $TOKEN_TYPE (Min: $MIN_BET, Max: $MAX_BET)" "$TX_OUTPUT"
     exit 0
 else
     # Regular mode - execute transaction directly
     TX_OUTPUT=$(sui client call \
         --package "$PACKAGE_ID" \
         --module "coin_flip" \
-        --function "add_whitelisted_token" \
+        --function "update_token_limits" \
         --type-args "$TOKEN_TYPE" \
         --args "$ADMIN_CAP" "$GAME_CONFIG" "$MIN_BET" "$MAX_BET" \
         --gas-budget "$GAS_BUDGET" \
@@ -154,16 +154,18 @@ fi
 
 TX_DIGEST=$(echo "$CLEAN_OUTPUT" | jq -r '.digest')
 
-# Update config with new whitelisted token
+# Update config with the updated token limits
 UPDATED_CONFIG=$(jq \
     --arg tokenType "$TOKEN_TYPE" \
+    --arg minBet "$MIN_BET" \
+    --arg maxBet "$MAX_BET" \
     --arg updateDate "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
     --arg txDigest "$TX_DIGEST" \
-    '.contractState.whitelistedTokens += [$tokenType] |
-    .contractState.whitelistedTokens |= unique |
-    .lastTokenUpdate = {
-        "action": "add",
+    '.lastTokenLimitUpdate = {
+        "action": "update_limits",
         "tokenType": $tokenType,
+        "minBet": ($minBet | tonumber),
+        "maxBet": ($maxBet | tonumber),
         "transaction": $txDigest,
         "date": $updateDate
     }' "$CONFIG_FILE")
@@ -171,10 +173,10 @@ UPDATED_CONFIG=$(jq \
 echo "$UPDATED_CONFIG" > "$CONFIG_FILE"
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}Token Whitelist Addition Complete!${NC}"
+echo -e "${GREEN}Token Bet Limits Update Complete!${NC}"
 echo -e "  Token: ${YELLOW}$TOKEN_TYPE${NC}"
-echo -e "  Min Bet: ${YELLOW}$MIN_BET ($MIN_BET_READABLE units)${NC}"
-echo -e "  Max Bet: ${YELLOW}$MAX_BET ($MAX_BET_READABLE units)${NC}"
+echo -e "  New Min Bet: ${YELLOW}$MIN_BET ($MIN_BET_READABLE units)${NC}"
+echo -e "  New Max Bet: ${YELLOW}$MAX_BET ($MAX_BET_READABLE units)${NC}"
 echo -e "  Transaction: ${YELLOW}$TX_DIGEST${NC}"
-echo -e "${GREEN}Games can now be created with this token within the specified limits${NC}"
+echo -e "${GREEN}Games will now use the updated bet limits for this token${NC}"
 echo -e "${GREEN}========================================${NC}" 

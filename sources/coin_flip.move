@@ -54,6 +54,13 @@ module sui_coin_flip::coin_flip {
         is_heads: bool,
     }
 
+    /// Per-token configuration for whitelisted tokens
+    public struct TokenConfig has copy, drop, store {
+        enabled: bool,
+        min_bet_amount: u64,
+        max_bet_amount: u64,
+    }
+
     /// Game state object
     /// bet_amount: The exact amount required to join this game (for UI display and validation)
     /// balance: The actual tokens held by the game (may temporarily exceed bet_amount during join)
@@ -64,7 +71,6 @@ module sui_coin_flip::coin_flip {
         bet_amount: u64, // Required bet amount to join
         creator_choice: CoinSide,
         balance: Balance<T>, // Actual tokens in the game
-        is_active: bool,
         created_at_ms: u64, // Timestamp when game was created
         token_type: std::type_name::TypeName, // Store the token type for validation
     }
@@ -81,10 +87,8 @@ module sui_coin_flip::coin_flip {
         fee_percentage: u64, // Configurable fee percentage
         treasury_address: address, // Address to receive fees directly
         is_paused: bool, // Emergency pause state
-        min_bet_amount: u64, // Configurable minimum bet
-        max_bet_amount: u64, // Configurable maximum bet
         max_games_per_transaction: u64, // Maximum games per bulk transaction
-        whitelisted_tokens: Table<TypeName, bool>, // Whitelisted token types
+        whitelisted_tokens: Table<TypeName, TokenConfig>, // Per-token configuration
     }
 
     // ======== Events ========
@@ -95,6 +99,7 @@ module sui_coin_flip::coin_flip {
         bet_amount: u64,
         creator_choice_heads: bool,
         token_type: TypeName, // Token type used for the game
+        created_at_ms: u64,
     }
 
     public struct GameJoined has copy, drop {
@@ -124,8 +129,6 @@ module sui_coin_flip::coin_flip {
         admin: address,
         fee_percentage: u64,
         is_paused: bool,
-        min_bet_amount: u64,
-        max_bet_amount: u64,
         treasury_address: address,
         max_games_per_transaction: u64,
     }
@@ -145,8 +148,12 @@ module sui_coin_flip::coin_flip {
         let deployer_address = tx_context::sender(ctx);
         
         // Initialize whitelist with SUI token by default
-        let whitelisted_tokens = table::new<TypeName, bool>(ctx);
-        table::add(&mut whitelisted_tokens, type_name::get<SUI>(), true);
+        let mut whitelisted_tokens = table::new<TypeName, TokenConfig>(ctx);
+        table::add(&mut whitelisted_tokens, type_name::get<SUI>(), TokenConfig {
+            enabled: true,
+            min_bet_amount: MIN_BET_AMOUNT,
+            max_bet_amount: MAX_BET_AMOUNT,
+        });
         
         let config = GameConfig {
             id: object::new(ctx),
@@ -154,8 +161,6 @@ module sui_coin_flip::coin_flip {
             fee_percentage: DEFAULT_FEE_PERCENTAGE,
             treasury_address: deployer_address, // Set deployer as initial treasury
             is_paused: false,
-            min_bet_amount: MIN_BET_AMOUNT,
-            max_bet_amount: MAX_BET_AMOUNT,
             max_games_per_transaction: DEFAULT_MAX_GAMES_PER_TX,
             whitelisted_tokens,
         };
@@ -180,26 +185,28 @@ module sui_coin_flip::coin_flip {
         // Check if contract is paused
         assert!(!config.is_paused, EContractPaused);
         
-        // Check if token is whitelisted
+        // Check if token is whitelisted and get per-token limits
         let token_type = type_name::get<T>();
         assert!(table::contains(&config.whitelisted_tokens, token_type), ETokenNotWhitelisted);
         
+        let token_config = table::borrow(&config.whitelisted_tokens, token_type);
+        assert!(token_config.enabled, ETokenNotWhitelisted);
+        
         let bet_amount = coin::value(&bet_coin);
         assert!(bet_amount > 0, EInvalidBetAmount);
-        assert!(bet_amount >= config.min_bet_amount, EBetTooSmall);
-        assert!(bet_amount <= config.max_bet_amount, EBetTooLarge);
+        assert!(bet_amount >= token_config.min_bet_amount, EBetTooSmall);
+        assert!(bet_amount <= token_config.max_bet_amount, EBetTooLarge);
 
         let creator = tx_context::sender(ctx);
         let creator_choice = CoinSide { is_heads: choice };
-        
+        let created_at_ms = clock::timestamp_ms(clock);
         let game = Game<T> {
             id: object::new(ctx),
             creator,
             bet_amount,
             creator_choice,
             balance: coin::into_balance(bet_coin),
-            is_active: true,
-            created_at_ms: clock::timestamp_ms(clock),
+            created_at_ms,
             token_type,
         };
 
@@ -212,6 +219,7 @@ module sui_coin_flip::coin_flip {
             bet_amount,
             creator_choice_heads: choice,
             token_type,
+            created_at_ms,
         });
 
         transfer::share_object(game);
@@ -238,13 +246,15 @@ module sui_coin_flip::coin_flip {
         // Check if token is whitelisted
         let token_type = type_name::get<T>();
         assert!(table::contains(&config.whitelisted_tokens, token_type), ETokenNotWhitelisted);
+        
+        let token_config = table::borrow(&config.whitelisted_tokens, token_type);
+        assert!(token_config.enabled, ETokenNotWhitelisted);
 
         // Calculate total required bet amount and validate all games
         let mut required_total: u64 = 0;
         let mut i: u64 = 0;
         while (i < games_count) {
             let game = vector::borrow(&games_raw, i);
-            assert!(game.is_active, EGameNotFound);
             assert!(joiner != game.creator, ECannotJoinOwnGame);
             // Verify all games use the same token type as payment
             assert!(game.token_type == token_type, ETokenMismatch);
@@ -298,7 +308,6 @@ module sui_coin_flip::coin_flip {
             bet_amount,
             creator_choice,
             balance,
-            is_active: _,
             created_at_ms: _,
             token_type,
         } = game;
@@ -364,7 +373,6 @@ module sui_coin_flip::coin_flip {
         let caller = tx_context::sender(ctx);
         
         // Security checks
-        assert!(game.is_active, EGameNotFound);
         assert!(caller == game.creator, ENotGameCreator);
 
         let Game {
@@ -373,7 +381,6 @@ module sui_coin_flip::coin_flip {
             bet_amount,
             creator_choice: _,
             balance,
-            is_active: _,
             created_at_ms: _,
             token_type,
         } = game;
@@ -409,8 +416,6 @@ module sui_coin_flip::coin_flip {
             admin: tx_context::sender(ctx),
             fee_percentage: config.fee_percentage,
             is_paused: config.is_paused,
-            min_bet_amount: config.min_bet_amount,
-            max_bet_amount: config.max_bet_amount,
             treasury_address: config.treasury_address,
             max_games_per_transaction: config.max_games_per_transaction,
         });
@@ -430,38 +435,11 @@ module sui_coin_flip::coin_flip {
             admin: tx_context::sender(ctx),
             fee_percentage: config.fee_percentage,
             is_paused: config.is_paused,
-            min_bet_amount: config.min_bet_amount,
-            max_bet_amount: config.max_bet_amount,
             treasury_address: config.treasury_address,
             max_games_per_transaction: config.max_games_per_transaction,
         });
     }
 
-    /// Update bet limits (admin only)
-    public entry fun update_bet_limits(
-        admin_cap: &AdminCap,
-        config: &mut GameConfig,
-        min_bet: u64,
-        max_bet: u64,
-        ctx: &mut TxContext
-    ) {
-        validate_admin_cap(admin_cap, config);
-        assert!(min_bet > 0, EInvalidBetAmount);
-        assert!(min_bet <= max_bet, EInvalidBetAmount);
-        
-        config.min_bet_amount = min_bet;
-        config.max_bet_amount = max_bet;
-        
-        event::emit(ConfigUpdated {
-            admin: tx_context::sender(ctx),
-            fee_percentage: config.fee_percentage,
-            is_paused: config.is_paused,
-            min_bet_amount: config.min_bet_amount,
-            max_bet_amount: config.max_bet_amount,
-            treasury_address: config.treasury_address,
-            max_games_per_transaction: config.max_games_per_transaction,
-        });
-    }
 
     /// Update fee percentage (admin only with proper validation)
     public entry fun update_fee_percentage(
@@ -479,8 +457,6 @@ module sui_coin_flip::coin_flip {
             admin: tx_context::sender(ctx),
             fee_percentage: config.fee_percentage,
             is_paused: config.is_paused,
-            min_bet_amount: config.min_bet_amount,
-            max_bet_amount: config.max_bet_amount,
             treasury_address: config.treasury_address,
             max_games_per_transaction: config.max_games_per_transaction,
         });
@@ -503,8 +479,6 @@ module sui_coin_flip::coin_flip {
             admin: tx_context::sender(ctx),
             fee_percentage: config.fee_percentage,
             is_paused: config.is_paused,
-            min_bet_amount: config.min_bet_amount,
-            max_bet_amount: config.max_bet_amount,
             treasury_address: config.treasury_address,
             max_games_per_transaction: config.max_games_per_transaction,
         });
@@ -514,11 +488,20 @@ module sui_coin_flip::coin_flip {
     public entry fun add_whitelisted_token<T>(
         admin_cap: &AdminCap,
         config: &mut GameConfig,
+        min_bet_amount: u64,
+        max_bet_amount: u64,
         _ctx: &mut TxContext
     ) {
         validate_admin_cap(admin_cap, config);
+        assert!(min_bet_amount > 0, EInvalidBetAmount);
+        assert!(min_bet_amount <= max_bet_amount, EInvalidBetAmount);
+        
         let token_type = type_name::get<T>();
-        table::add(&mut config.whitelisted_tokens, token_type, true);
+        table::add(&mut config.whitelisted_tokens, token_type, TokenConfig {
+            enabled: true,
+            min_bet_amount,
+            max_bet_amount,
+        });
     }
 
     /// Remove a token from the whitelist (admin only)
@@ -532,15 +515,49 @@ module sui_coin_flip::coin_flip {
         table::remove(&mut config.whitelisted_tokens, token_type);
     }
 
+    /// Update bet limits for a specific token (admin only)
+    public entry fun update_token_limits<T>(
+        admin_cap: &AdminCap,
+        config: &mut GameConfig,
+        min_bet_amount: u64,
+        max_bet_amount: u64,
+        _ctx: &mut TxContext
+    ) {
+        validate_admin_cap(admin_cap, config);
+        assert!(min_bet_amount > 0, EInvalidBetAmount);
+        assert!(min_bet_amount <= max_bet_amount, EInvalidBetAmount);
+        
+        let token_type = type_name::get<T>();
+        assert!(table::contains(&config.whitelisted_tokens, token_type), ETokenNotWhitelisted);
+        
+        let token_config = table::borrow_mut(&mut config.whitelisted_tokens, token_type);
+        token_config.min_bet_amount = min_bet_amount;
+        token_config.max_bet_amount = max_bet_amount;
+    }
+
+    /// Enable or disable a whitelisted token (admin only)
+    public entry fun set_token_enabled<T>(
+        admin_cap: &AdminCap,
+        config: &mut GameConfig,
+        enabled: bool,
+        _ctx: &mut TxContext
+    ) {
+        validate_admin_cap(admin_cap, config);
+        let token_type = type_name::get<T>();
+        assert!(table::contains(&config.whitelisted_tokens, token_type), ETokenNotWhitelisted);
+        
+        let token_config = table::borrow_mut(&mut config.whitelisted_tokens, token_type);
+        token_config.enabled = enabled;
+    }
+
     // ======== View Functions ========
 
     /// Get game details (including creation timestamp)
-    public fun get_game_info<T>(game: &Game<T>): (address, u64, bool, bool, u64) {
+    public fun get_game_info<T>(game: &Game<T>): (address, u64, bool, u64) {
         (
             game.creator,
             game.bet_amount,
             game.creator_choice.is_heads,
-            game.is_active,
             game.created_at_ms
         )
     }
@@ -548,11 +565,16 @@ module sui_coin_flip::coin_flip {
     /// Check if a token is whitelisted
     public fun is_token_whitelisted<T>(config: &GameConfig): bool {
         let token_type = type_name::get<T>();
-        table::contains(&config.whitelisted_tokens, token_type)
+        if (table::contains(&config.whitelisted_tokens, token_type)) {
+            let token_config = table::borrow(&config.whitelisted_tokens, token_type);
+            token_config.enabled
+        } else {
+            false
+        }
     }
 
     /// Get whitelisted tokens
-    public fun get_whitelisted_tokens(config: &GameConfig): &Table<TypeName, bool> {
+    public fun get_whitelisted_tokens(config: &GameConfig): &Table<TypeName, TokenConfig> {
         &config.whitelisted_tokens
     }
 
@@ -566,24 +588,37 @@ module sui_coin_flip::coin_flip {
         config.fee_percentage
     }
 
-    /// Get admin cap ID for verification
-    public fun get_admin_cap_id(config: &GameConfig): address {
-        config.admin_cap_id
-    }
 
     /// Get contract pause state
     public fun is_contract_paused(config: &GameConfig): bool {
         config.is_paused
     }
 
-    /// Get bet limits
-    public fun get_bet_limits(config: &GameConfig): (u64, u64) {
-        (config.min_bet_amount, config.max_bet_amount)
-    }
-
     /// Get max games per transaction limit
     public fun get_max_games_per_transaction(config: &GameConfig): u64 {
         config.max_games_per_transaction
+    }
+
+    /// Get token configuration
+    public fun get_token_config<T>(config: &GameConfig): (bool, u64, u64) {
+        let token_type = type_name::get<T>();
+        if (table::contains(&config.whitelisted_tokens, token_type)) {
+            let token_config = table::borrow(&config.whitelisted_tokens, token_type);
+            (token_config.enabled, token_config.min_bet_amount, token_config.max_bet_amount)
+        } else {
+            (false, 0, 0)
+        }
+    }
+
+    /// Get token bet limits for a specific token
+    public fun get_token_bet_limits<T>(config: &GameConfig): (u64, u64) {
+        let token_type = type_name::get<T>();
+        if (table::contains(&config.whitelisted_tokens, token_type)) {
+            let token_config = table::borrow(&config.whitelisted_tokens, token_type);
+            (token_config.min_bet_amount, token_config.max_bet_amount)
+        } else {
+            (0, 0)
+        }
     }
 
     // ======== Test Functions ========
@@ -602,7 +637,27 @@ module sui_coin_flip::coin_flip {
     }
 
     #[test_only]
-    public fun set_game_inactive_for_testing<T>(game: &mut Game<T>) {
-        game.is_active = false;
+    public fun create_game_with_wrong_token_type_for_testing<T>(
+        bet_coin: Coin<T>,
+        choice: bool,
+        wrong_token_type: std::type_name::TypeName,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        let creator = tx_context::sender(ctx);
+        let bet_amount = coin::value(&bet_coin);
+        let creator_choice = CoinSide { is_heads: choice };
+        
+        let game = Game<T> {
+            id: object::new(ctx),
+            creator,
+            bet_amount,
+            creator_choice,
+            balance: coin::into_balance(bet_coin),
+            created_at_ms: clock::timestamp_ms(clock),
+            token_type: wrong_token_type, // Intentionally wrong for testing
+        };
+        
+        transfer::share_object(game);
     }
 } 
