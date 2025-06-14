@@ -1,13 +1,16 @@
 #!/bin/bash
 
 # Deploy Coin Flip Game
-# Usage: ./deploy.sh <network> <rpc_url> <gas_budget>
+# Usage: ./deploy.sh <network> <rpc_url> <gas_budget> [ledger_mode] [ledger_address] [gas_object_id]
 
 set -e
 
 NETWORK=$1
 RPC_URL=$2
 GAS_BUDGET=$3
+LEDGER_MODE=${4:-false}
+LEDGER_ADDRESS=$5
+GAS_OBJECT_ID=$6
 
 # Colors
 GREEN='\033[0;32m'
@@ -15,10 +18,60 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Function to auto-select gas coin from Ledger address
+auto_select_gas_coin() {
+    local ledger_addr=$1
+    echo -e "${GREEN}Auto-selecting gas coin for Ledger address: $ledger_addr${NC}" >&2
+    
+    # Get gas coins for the address
+    local gas_output=$(sui client gas "$ledger_addr" --json 2>/dev/null)
+    if [ $? -ne 0 ] || [ -z "$gas_output" ]; then
+        echo -e "${RED}Failed to query gas coins for address: $ledger_addr${NC}" >&2
+        return 1
+    fi
+    
+    # Extract the first gas coin with sufficient balance
+    local selected_gas=$(echo "$gas_output" | jq -r --arg budget "$GAS_BUDGET" '.[] | select(.mistBalance >= ($budget | tonumber)) | .gasCoinId' | head -1)
+    
+    if [ -z "$selected_gas" ] || [ "$selected_gas" = "null" ]; then
+        echo -e "${RED}No gas coin found with sufficient balance (need $GAS_BUDGET MIST)${NC}" >&2
+        echo -e "${YELLOW}Available gas coins:${NC}" >&2
+        echo "$gas_output" | jq -r '.[] | "  \(.gasCoinId): \(.mistBalance) MIST"' 2>/dev/null || echo "  None found" >&2
+        return 1
+    fi
+    
+    echo -e "${GREEN}Selected gas coin: $selected_gas${NC}" >&2
+    echo "$selected_gas"
+}
+
 # Check parameters
 if [ -z "$NETWORK" ] || [ -z "$RPC_URL" ] || [ -z "$GAS_BUDGET" ]; then
-    echo -e "${RED}Usage: $0 <network> <rpc_url> <gas_budget>${NC}"
+    echo -e "${RED}Usage: $0 <network> <rpc_url> <gas_budget> [ledger_mode] [ledger_address] [gas_object_id]${NC}"
     exit 1
+fi
+
+# Check ledger mode requirements and auto-select gas if needed
+if [ "$LEDGER_MODE" = "true" ]; then
+    if [ -n "$LEDGER_ADDRESS" ] && [ -z "$GAS_OBJECT_ID" ]; then
+        # Auto-select gas coin from Ledger address
+        GAS_OBJECT_ID=$(auto_select_gas_coin "$LEDGER_ADDRESS")
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to auto-select gas coin${NC}"
+            exit 1
+        fi
+    elif [ -z "$LEDGER_ADDRESS" ] && [ -z "$GAS_OBJECT_ID" ]; then
+        echo -e "${RED}Error: Either LEDGER_ADDRESS or GAS_OBJECT_ID is required when LEDGER_MODE=true${NC}"
+        echo -e "${YELLOW}Usage 1 (auto gas): $0 $NETWORK $RPC_URL $GAS_BUDGET true <ledger_address>${NC}"
+        echo -e "${YELLOW}Usage 2 (manual gas): $0 $NETWORK $RPC_URL $GAS_BUDGET true \"\" <gas_object_id>${NC}"
+        exit 1
+    fi
+    
+    if [ -z "$GAS_OBJECT_ID" ]; then
+        echo -e "${RED}Error: Could not determine gas object ID${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}Using gas object: $GAS_OBJECT_ID${NC}"
 fi
 
 echo -e "${GREEN}========================================${NC}"
@@ -50,16 +103,49 @@ echo -e "${GREEN}Checking SUI client status...${NC}"
 sui client active-env
 echo ""
 
-# Publish the package and capture output
-echo -e "${GREEN}Running: sui client publish --gas-budget $GAS_BUDGET --json${NC}"
-PUBLISH_OUTPUT=$(sui client publish --gas-budget $GAS_BUDGET --json 2>&1)
-PUBLISH_EXIT_CODE=$?
-
-# Check if publish was successful
-if [ $PUBLISH_EXIT_CODE -ne 0 ]; then
-    echo -e "${RED}Failed to publish package${NC}"
-    echo "Output: $PUBLISH_OUTPUT"
-    exit 1
+# Handle Ledger mode vs regular mode
+if [ "$LEDGER_MODE" = "true" ]; then
+    echo -e "${GREEN}🔒 LEDGER MODE: Generating unsigned transaction bytes${NC}"
+    echo -e "${GREEN}Running: sui client publish --serialize-unsigned-transaction --gas $GAS_OBJECT_ID --gas-budget $GAS_BUDGET${NC}"
+    
+    PUBLISH_OUTPUT=$(sui client publish --serialize-unsigned-transaction --gas "$GAS_OBJECT_ID" --gas-budget $GAS_BUDGET 2>&1)
+    PUBLISH_EXIT_CODE=$?
+    
+    if [ $PUBLISH_EXIT_CODE -ne 0 ]; then
+        echo -e "${RED}Failed to generate unsigned transaction${NC}"
+        echo "Output: $PUBLISH_OUTPUT"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${GREEN}🔒 LEDGER TRANSACTION READY${NC}"
+    echo -e "${GREEN}========================================${NC}"
+    echo -e "${YELLOW}Transaction Bytes:${NC}"
+    echo "$PUBLISH_OUTPUT"
+    echo ""
+    echo -e "${GREEN}Next Steps:${NC}"
+    echo -e "1. Copy the transaction bytes above"
+    echo -e "2. Go to: ${BLUE}https://multisig-toolkit.mystenlabs.com/offline-signer${NC}"
+    echo -e "3. Paste transaction bytes and connect your Ledger"
+    echo -e "4. Sign the transaction to get the signature"
+    echo -e "5. Go to: ${BLUE}https://multisig-toolkit.mystenlabs.com/execute-transaction${NC}"
+    echo -e "6. Paste transaction bytes + signature and execute"
+    echo -e "7. After execution, you'll get the transaction digest"
+    echo -e "8. Update your deployment config manually with the new package details"
+    echo -e "${GREEN}========================================${NC}"
+    exit 0
+else
+    # Regular mode - execute transaction directly
+    echo -e "${GREEN}Running: sui client publish --gas-budget $GAS_BUDGET --json${NC}"
+    PUBLISH_OUTPUT=$(sui client publish --gas-budget $GAS_BUDGET --json 2>&1)
+    PUBLISH_EXIT_CODE=$?
+    
+    # Check if publish was successful
+    if [ $PUBLISH_EXIT_CODE -ne 0 ]; then
+        echo -e "${RED}Failed to publish package${NC}"
+        echo "Output: $PUBLISH_OUTPUT"
+        exit 1
+    fi
 fi
 
 # Try to extract JSON from the output (in case there are warnings before JSON)

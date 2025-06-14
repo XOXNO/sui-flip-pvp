@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Remove token from coin flip game whitelist
-# Usage: ./remove_token.sh <network> <token_type> <rpc_url> <gas_budget>
+# Usage: ./remove_token.sh <network> <token_type> <rpc_url> <gas_budget> [ledger_mode] [ledger_address] [gas_object_id]
 
 set -e
 
@@ -9,19 +9,37 @@ NETWORK=$1
 TOKEN_TYPE=$2
 RPC_URL=$3
 GAS_BUDGET=$4
+LEDGER_MODE=${5:-false}
+LEDGER_ADDRESS=$6
+GAS_OBJECT_ID=$7
 
 # Colors
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
+
+# Source Ledger utilities
+SCRIPT_DIR=$(dirname "${BASH_SOURCE[0]}")
+source "$SCRIPT_DIR/../utils/ledger_utils.sh"
 
 # Check parameters
 if [ -z "$NETWORK" ] || [ -z "$TOKEN_TYPE" ] || [ -z "$RPC_URL" ] || [ -z "$GAS_BUDGET" ]; then
-    echo -e "${RED}Usage: $0 <network> <token_type> <rpc_url> <gas_budget>${NC}"
+    echo -e "${RED}Usage: $0 <network> <token_type> <rpc_url> <gas_budget> [ledger_mode] [ledger_address] [gas_object_id]${NC}"
     echo -e "${YELLOW}Example: $0 testnet 0x123::usdc::USDC https://fullnode.testnet.sui.io:443 200000000${NC}"
     echo -e "${RED}Warning: Do not remove SUI token as it's the primary currency${NC}"
     exit 1
+fi
+
+# Setup Ledger gas selection if needed
+if ! setup_ledger_gas "$LEDGER_MODE" "$LEDGER_ADDRESS" "$GAS_OBJECT_ID" "$GAS_BUDGET"; then
+    exit 1
+fi
+
+# Use the selected gas object ID
+if [ "$LEDGER_MODE" = "true" ]; then
+    GAS_OBJECT_ID="$SELECTED_GAS_OBJECT_ID"
 fi
 
 # Validate token type format (should look like package::module::Type)
@@ -62,15 +80,39 @@ echo -e "  Package: ${YELLOW}$PACKAGE_ID${NC}"
 echo -e "  GameConfig: ${YELLOW}$GAME_CONFIG${NC}"
 echo -e "  AdminCap: ${YELLOW}$ADMIN_CAP${NC}"
 
-# Execute the transaction
-TX_OUTPUT=$(sui client call \
-    --package "$PACKAGE_ID" \
-    --module "coin_flip" \
-    --function "remove_whitelisted_token" \
-    --type-args "$TOKEN_TYPE" \
-    --args "$ADMIN_CAP" "$GAME_CONFIG" \
-    --gas-budget "$GAS_BUDGET" \
-    --json 2>&1)
+# Execute the transaction or generate unsigned tx bytes
+if [ "$LEDGER_MODE" = "true" ]; then
+    echo -e "${GREEN}🔒 LEDGER MODE: Generating unsigned transaction bytes${NC}"
+    
+    TX_OUTPUT=$(sui client call \
+        --package "$PACKAGE_ID" \
+        --module "coin_flip" \
+        --function "remove_whitelisted_token" \
+        --type-args "$TOKEN_TYPE" \
+        --args "$ADMIN_CAP" "$GAME_CONFIG" \
+        --serialize-unsigned-transaction \
+        --gas "$GAS_OBJECT_ID" \
+        --gas-budget "$GAS_BUDGET" 2>&1)
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Failed to generate unsigned transaction${NC}"
+        echo "Output: $TX_OUTPUT"
+        exit 1
+    fi
+    
+    show_ledger_instructions "Remove Token: $TOKEN_TYPE from Whitelist" "$TX_OUTPUT"
+    exit 0
+else
+    # Regular mode - execute transaction directly
+    TX_OUTPUT=$(sui client call \
+        --package "$PACKAGE_ID" \
+        --module "coin_flip" \
+        --function "remove_whitelisted_token" \
+        --type-args "$TOKEN_TYPE" \
+        --args "$ADMIN_CAP" "$GAME_CONFIG" \
+        --gas-budget "$GAS_BUDGET" \
+        --json 2>&1)
+fi
 
 # Extract JSON by finding the line with the opening brace and taking everything from there
 JSON_START_LINE=$(echo "$TX_OUTPUT" | grep -n '^{' | head -1 | cut -d: -f1)
