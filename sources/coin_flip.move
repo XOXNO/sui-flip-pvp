@@ -145,7 +145,7 @@ module sui_coin_flip::coin_flip {
         let deployer_address = tx_context::sender(ctx);
         
         // Initialize whitelist with SUI token by default
-        let mut whitelisted_tokens = table::new<TypeName, bool>(ctx);
+        let whitelisted_tokens = table::new<TypeName, bool>(ctx);
         table::add(&mut whitelisted_tokens, type_name::get<SUI>(), true);
         
         let config = GameConfig {
@@ -167,21 +167,6 @@ module sui_coin_flip::coin_flip {
     /// Validate admin capability
     fun validate_admin_cap(admin_cap: &AdminCap, config: &GameConfig) {
         assert!(object::uid_to_address(&admin_cap.id) == config.admin_cap_id, EInvalidAdminCap);
-    }
-
-    /// Create a new heads choice
-    public fun heads(): CoinSide {
-        CoinSide { is_heads: true }
-    }
-
-    /// Create a new tails choice
-    public fun tails(): CoinSide {
-        CoinSide { is_heads: false }
-    }
-
-    /// Check if a coin side is heads
-    public fun is_heads(side: &CoinSide): bool {
-        side.is_heads
     }
 
     /// Create a new coin flip game
