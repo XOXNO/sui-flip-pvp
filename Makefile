@@ -8,8 +8,8 @@
 export
 
 # Default values (can be overridden by sui-flip.env or command line)
-NETWORK ?= testnet
-LEDGER_MODE ?= false
+NETWORK ?= mainnet
+LEDGER_MODE ?= true
 LEDGER_ADDRESS ?=
 GAS_OBJECT_ID ?=
 

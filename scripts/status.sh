@@ -64,14 +64,8 @@ fi
 # Extract contract state
 IS_PAUSED=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.is_paused')
 FEE_PERCENTAGE=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.fee_percentage')
-MIN_BET=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.min_bet_amount')
-MAX_BET=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.max_bet_amount')
 TREASURY_ADDRESS=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.treasury_address')
 MAX_GAMES_PER_TX=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.max_games_per_transaction')
-
-# Convert amounts to SUI for display
-MIN_BET_SUI=$(echo "scale=9; $MIN_BET/1000000000" | bc)
-MAX_BET_SUI=$(echo "scale=9; $MAX_BET/1000000000" | bc)
 
 # Display contract state with colors
 if [ "$IS_PAUSED" = "true" ]; then
@@ -81,10 +75,74 @@ else
 fi
 
 echo -e "  Fee Percentage: ${YELLOW}$FEE_PERCENTAGE bps ($(echo "scale=2; $FEE_PERCENTAGE/100" | bc)%)${NC}"
-echo -e "  Min Bet: ${YELLOW}$MIN_BET MIST ($MIN_BET_SUI SUI)${NC}"
-echo -e "  Max Bet: ${YELLOW}$MAX_BET MIST ($MAX_BET_SUI SUI)${NC}"
 echo -e "  Treasury Address: ${YELLOW}$TREASURY_ADDRESS${NC}"
 echo -e "  Max Games per Tx: ${YELLOW}$MAX_GAMES_PER_TX${NC}"
+
+echo ""
+echo -e "${BLUE}Whitelisted Tokens:${NC}"
+
+# Get whitelisted tokens table
+WHITELIST_TABLE_ID=$(echo "$GAME_CONFIG_INFO" | jq -r '.content.fields.whitelisted_tokens.fields.id.id')
+
+if [ "$WHITELIST_TABLE_ID" != "null" ] && [ ! -z "$WHITELIST_TABLE_ID" ]; then
+    # Query the table to get dynamic fields (tokens)
+    DYNAMIC_FIELDS_RESULT=$(sui client dynamic-field "$WHITELIST_TABLE_ID" --json 2>/dev/null || echo '{"data": []}')
+    DYNAMIC_FIELDS=$(echo "$DYNAMIC_FIELDS_RESULT" | jq -r '.data')
+    
+    if [ "$DYNAMIC_FIELDS" != "[]" ] && [ "$DYNAMIC_FIELDS" != "null" ]; then
+        # Get the count of tokens
+        TOKEN_COUNT=$(echo "$DYNAMIC_FIELDS" | jq length)
+        
+        # Process each token using jq array indices
+        for ((i=0; i<TOKEN_COUNT; i++)); do
+            FIELD_NAME=$(echo "$DYNAMIC_FIELDS" | jq -r ".[$i].name.value.name")
+            FIELD_OBJECT_ID=$(echo "$DYNAMIC_FIELDS" | jq -r ".[$i].objectId")
+            
+            # Get the token config details
+            TOKEN_CONFIG=$(sui client object "$FIELD_OBJECT_ID" --json 2>/dev/null || echo "{}")
+            
+            if [ "$TOKEN_CONFIG" != "{}" ]; then
+                ENABLED=$(echo "$TOKEN_CONFIG" | jq -r '.content.fields.value.fields.enabled')
+                MIN_BET=$(echo "$TOKEN_CONFIG" | jq -r '.content.fields.value.fields.min_bet_amount')
+                MAX_BET=$(echo "$TOKEN_CONFIG" | jq -r '.content.fields.value.fields.max_bet_amount')
+                
+                # Format token name for display
+                if [[ "$FIELD_NAME" == *"sui::SUI"* ]]; then
+                    TOKEN_DISPLAY="SUI"
+                    # Convert MIST to SUI for display (handle bc availability)
+                    if command -v bc >/dev/null 2>&1; then
+                        MIN_BET_DISPLAY=$(echo "scale=2; $MIN_BET/1000000000" | bc 2>/dev/null | sed 's/\.0*$//' | sed 's/^\./0./')
+                        MAX_BET_DISPLAY=$(echo "scale=2; $MAX_BET/1000000000" | bc 2>/dev/null | sed 's/\.0*$//' | sed 's/^\./0./')
+                    else
+                        echo "No bc found, using awk"
+                        MIN_BET_DISPLAY=$(awk "BEGIN {printf \"%.2f\", $MIN_BET/1000000000}")
+                        MAX_BET_DISPLAY=$(awk "BEGIN {printf \"%.2f\", $MAX_BET/1000000000}")
+                    fi
+                    UNIT="SUI"
+                else
+                    # Extract token symbol from type name
+                    TOKEN_DISPLAY=$(echo "$FIELD_NAME" | sed 's/.*::\([^:]*\)$/\1/')
+                    MIN_BET_DISPLAY="$MIN_BET"
+                    MAX_BET_DISPLAY="$MAX_BET"
+                    UNIT="units"
+                fi
+                
+                # Display status with color
+                if [ "$ENABLED" = "true" ]; then
+                    STATUS="${GREEN}ENABLED${NC}"
+                else
+                    STATUS="${RED}DISABLED${NC}"
+                fi
+                
+                echo -e "  ${YELLOW}$TOKEN_DISPLAY${NC}: $STATUS - Min: ${YELLOW}$MIN_BET_DISPLAY $UNIT${NC}, Max: ${YELLOW}$MAX_BET_DISPLAY $UNIT${NC}"
+            fi
+        done
+    else
+        echo -e "  ${YELLOW}No tokens whitelisted${NC}"
+    fi
+else
+    echo -e "  ${RED}Could not query whitelisted tokens${NC}"
+fi
 
 echo ""
 
@@ -133,7 +191,10 @@ echo ""
 # Display available commands
 echo -e "${BLUE}Available Commands:${NC}"
 echo -e "  make set-fee FEE_BPS=<bps> NETWORK=$NETWORK"
-echo -e "  make update-limits MIN_BET=<amount> MAX_BET=<amount> NETWORK=$NETWORK"
+echo -e "  make add-token TOKEN_TYPE=<type> MIN_BET=<amount> MAX_BET=<amount> NETWORK=$NETWORK"
+echo -e "  make update-token-limits TOKEN_TYPE=<type> MIN_BET=<amount> MAX_BET=<amount> NETWORK=$NETWORK"
+echo -e "  make remove-token TOKEN_TYPE=<type> NETWORK=$NETWORK"
+echo -e "  make list-tokens NETWORK=$NETWORK"
 echo -e "  make update-treasury TREASURY_ADDRESS=<address> NETWORK=$NETWORK"
 echo -e "  make update-max-games MAX_GAMES=<number> NETWORK=$NETWORK"
 if [ "$IS_PAUSED" = "true" ]; then
